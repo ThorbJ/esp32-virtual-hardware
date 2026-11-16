@@ -1,0 +1,53 @@
+{
+  "name": "esp32-virtual-hardware",
+  "version": "0.1.0",
+  "description": "Run unmodified ESP32 firmware in the browser: shared virtual hardware, the virtual device interface, the device description format and the web runtime.",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ThorbJ/esp32-virtual-hardware.git"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "exports": {
+    "./interface": "./src/interface/index.mjs",
+    "./interface/node": "./src/interface/node-loader.mjs",
+    "./device-description": "./device-description/validate.mjs",
+    "./device-description/schema.json": "./device-description/schema.json",
+    "./package": "./src/package/index.mjs",
+    "./runtime": "./src/runtime/index.mjs",
+    "./runtime/three-viewer": "./src/runtime/three-viewer.mjs",
+    "./tools/*": "./tools/*",
+    "./fixtures/*": "./fixtures/*",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "vhw",
+    "tools",
+    "device-description",
+    "test-device",
+    "fixtures",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test --test-concurrency=1 tests/*.test.mjs",
+    "build:test-device": "node test-device/build.mjs",
+    "dev": "node tools/dev-server.mjs"
+  },
+  "peerDependencies": {
+    "three": ">=0.160.0"
+  },
+  "peerDependenciesMeta": {
+    "three": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "ajv": "8.17.1",
+    "three": "0.187.0"
+  }
+}

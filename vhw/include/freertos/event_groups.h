@@ -1,0 +1,21 @@
+#pragma once
+#include "freertos/FreeRTOS.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef struct vhw_event_group* EventGroupHandle_t;
+typedef uint32_t EventBits_t;
+
+EventGroupHandle_t xEventGroupCreate(void);
+void vEventGroupDelete(EventGroupHandle_t g);
+EventBits_t xEventGroupSetBits(EventGroupHandle_t g, EventBits_t bits);
+EventBits_t xEventGroupClearBits(EventGroupHandle_t g, EventBits_t bits);
+EventBits_t xEventGroupGetBits(EventGroupHandle_t g);
+EventBits_t xEventGroupWaitBits(EventGroupHandle_t g, EventBits_t bits, BaseType_t clear, BaseType_t all, TickType_t wait);
+#define xEventGroupSetBitsFromISR(g, b, w) ((void)(w), xEventGroupSetBits((g), (b)), pdPASS)
+
+#ifdef __cplusplus
+}
+#endif

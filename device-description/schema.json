@@ -1,0 +1,659 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ThorbJ/esp32-virtual-hardware/blob/main/device-description/schema.json",
+  "title": "Virtual device description, format version 1",
+  "description": "Structure of device.json in a virtual device package. Cross-field rules (files listed, channels agreeing with sections, touch on the screen node, area inside 0..1) are checked by validate.mjs, which is the reference. See README.md in this folder.",
+  "type": "object",
+  "properties": {
+    "formatVersion": {
+      "const": 1
+    },
+    "device": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]*$"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "appliesTo": {
+      "type": "object",
+      "properties": {
+        "kit": {
+          "type": "string",
+          "minLength": 1
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "kit",
+        "options"
+      ],
+      "additionalProperties": false
+    },
+    "firmware": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "upstream": {
+          "type": "object",
+          "properties": {
+            "repo": {
+              "type": "string",
+              "pattern": "^https://[^\\s/]+/\\S*$"
+            },
+            "commit": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            }
+          },
+          "required": [
+            "repo",
+            "commit"
+          ],
+          "additionalProperties": false
+        },
+        "virtualDevice": {
+          "type": "object",
+          "properties": {
+            "repo": {
+              "type": "string",
+              "pattern": "^https://[^\\s/]+/\\S*$"
+            },
+            "commit": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            }
+          },
+          "required": [
+            "repo",
+            "commit"
+          ],
+          "additionalProperties": false
+        },
+        "license": {
+          "type": "object",
+          "properties": {
+            "spdx": {
+              "type": "string",
+              "minLength": 1
+            },
+            "note": {
+              "type": "object",
+              "properties": {
+                "zh": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "en": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "zh",
+                "en"
+              ],
+              "additionalProperties": false
+            },
+            "unofficial": {
+              "type": "boolean"
+            },
+            "files": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "required": [
+            "spdx",
+            "unofficial"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "version",
+        "upstream",
+        "virtualDevice",
+        "license"
+      ],
+      "additionalProperties": false
+    },
+    "runtime": {
+      "type": "object",
+      "properties": {
+        "interfaceVersion": {
+          "const": 3
+        },
+        "module": {
+          "type": "string",
+          "pattern": "\\.mjs$"
+        },
+        "memoryMB": {
+          "type": "integer",
+          "minimum": 16,
+          "maximum": 4096
+        },
+        "threads": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        },
+        "virtualTime": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "interfaceVersion",
+        "module",
+        "memoryMB",
+        "threads",
+        "virtualTime"
+      ],
+      "additionalProperties": false
+    },
+    "files": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "pattern": "^(firmware|licenses)/[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$",
+            "not": {
+              "pattern": "(^|/)\\.\\.?(/|$)"
+            }
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 33554432
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "required": [
+          "path",
+          "size",
+          "sha256"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "channels": {
+      "type": "object",
+      "properties": {
+        "in": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "button",
+              "joystick",
+              "touch",
+              "mic",
+              "camera",
+              "hostRx",
+              "hostPresent"
+            ]
+          }
+        },
+        "out": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "screen",
+              "servo",
+              "speaker",
+              "hostTx",
+              "log"
+            ]
+          }
+        }
+      },
+      "required": [
+        "in",
+        "out"
+      ],
+      "additionalProperties": false
+    },
+    "screen": {
+      "type": "object",
+      "properties": {
+        "node": {
+          "type": "string",
+          "minLength": 1
+        },
+        "materialIndex": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 63
+        },
+        "panel": {
+          "type": "object",
+          "properties": {
+            "width": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2048
+            },
+            "height": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2048
+            },
+            "format": {
+              "const": "rgb565"
+            }
+          },
+          "required": [
+            "width",
+            "height",
+            "format"
+          ],
+          "additionalProperties": false
+        },
+        "rotateCW": {
+          "enum": [
+            0,
+            90,
+            180,
+            270
+          ]
+        },
+        "area": {
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "y": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "width": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1
+            },
+            "height": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1
+            }
+          },
+          "required": [
+            "x",
+            "y",
+            "width",
+            "height"
+          ],
+          "additionalProperties": false
+        },
+        "background": {
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$"
+        }
+      },
+      "required": [
+        "node",
+        "panel",
+        "rotateCW",
+        "area"
+      ],
+      "additionalProperties": false
+    },
+    "inputs": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "button"
+              },
+              "node": {
+                "type": "string",
+                "minLength": 1
+              },
+              "button": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 31
+              },
+              "press": {
+                "type": "object",
+                "properties": {
+                  "offsetMm": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3
+                  }
+                },
+                "required": [
+                  "offsetMm"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "kind",
+              "node",
+              "button"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "joystick"
+              },
+              "node": {
+                "type": "string",
+                "minLength": 1
+              },
+              "right": {
+                "allOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3
+                  },
+                  {
+                    "not": {
+                      "const": [
+                        0,
+                        0,
+                        0
+                      ]
+                    }
+                  }
+                ]
+              },
+              "up": {
+                "allOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3
+                  },
+                  {
+                    "not": {
+                      "const": [
+                        0,
+                        0,
+                        0
+                      ]
+                    }
+                  }
+                ]
+              },
+              "radiusMm": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 1000
+              },
+              "button": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 31
+              },
+              "press": {
+                "type": "object",
+                "properties": {
+                  "offsetMm": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3
+                  }
+                },
+                "required": [
+                  "offsetMm"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "kind",
+              "node",
+              "right",
+              "up",
+              "radiusMm"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "touch"
+              },
+              "node": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "kind",
+              "node"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "servos": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 31
+          },
+          "nodes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          },
+          "pivot": {
+            "oneOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 3,
+                "maxItems": 3
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "node": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "node"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "axis": {
+            "allOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 3,
+                "maxItems": 3
+              },
+              {
+                "not": {
+                  "const": [
+                    0,
+                    0,
+                    0
+                  ]
+                }
+              }
+            ]
+          },
+          "zeroDeg": {
+            "type": "number",
+            "minimum": -360,
+            "maximum": 360
+          },
+          "direction": {
+            "enum": [
+              1,
+              -1
+            ]
+          },
+          "scale": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "minDeg": {
+            "type": "number",
+            "minimum": -360,
+            "maximum": 360
+          },
+          "maxDeg": {
+            "type": "number",
+            "minimum": -360,
+            "maximum": 360
+          },
+          "approximate": {
+            "type": "object",
+            "properties": {
+              "zh": {
+                "type": "string",
+                "minLength": 1
+              },
+              "en": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "zh",
+              "en"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "id",
+          "nodes",
+          "pivot",
+          "axis",
+          "zeroDeg",
+          "direction",
+          "scale"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "hostLink": {
+      "type": "object",
+      "properties": {
+        "port": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 65535
+        },
+        "path": {
+          "type": "string",
+          "pattern": "^/[\\x21-\\x7e]*$"
+        },
+        "protocol": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "port",
+        "path",
+        "protocol"
+      ],
+      "additionalProperties": false
+    },
+    "mic": {
+      "type": "object",
+      "properties": {
+        "sampleRate": {
+          "enum": [
+            8000,
+            16000,
+            24000,
+            32000,
+            44100,
+            48000
+          ]
+        }
+      },
+      "required": [
+        "sampleRate"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "formatVersion",
+    "device",
+    "appliesTo",
+    "firmware",
+    "runtime",
+    "files",
+    "channels"
+  ],
+  "additionalProperties": false
+}

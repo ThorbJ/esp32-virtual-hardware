@@ -1,0 +1,7 @@
+#pragma once
+#include "freertos/FreeRTOS.h"
+#define ESP_TASK_PRIO_MAX (configMAX_PRIORITIES)
+#define ESP_TASK_PRIO_MIN (0)
+#define ESP_TASK_MAIN_PRIO (ESP_TASK_PRIO_MIN + 1)
+#define ESP_TASK_MAIN_STACK (CONFIG_ESP_MAIN_TASK_STACK_SIZE)
+#define ESP_TASK_MAIN_CORE 0
