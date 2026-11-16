@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "units": "mm",
+  "home": {
+    "direction": [
+      0.35,
+      0.3,
+      0.88
+    ]
+  },
+  "dimensionsMm": [
+    70,
+    70,
+    34
+  ],
+  "lines": [
+    {
+      "line": "case",
+      "nodes": [
+        "case"
+      ],
+      "explode": [
+        0,
+        0,
+        -30
+      ]
+    },
+    {
+      "line": "screen",
+      "nodes": [
+        "screen"
+      ],
+      "explode": [
+        0,
+        0,
+        30
+      ]
+    },
+    {
+      "line": "button",
+      "nodes": [
+        "button"
+      ],
+      "explode": [
+        0,
+        -20,
+        20
+      ]
+    },
+    {
+      "line": "servo",
+      "nodes": [
+        "servo",
+        "arm"
+      ],
+      "explode": [
+        0,
+        30,
+        0
+      ]
+    }
+  ],
+  "approximate": []
+}
