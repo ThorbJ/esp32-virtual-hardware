@@ -72,21 +72,39 @@ export function createAudioIo(dev, { micRate = 16000, onState = () => {} } = {})
   let micNodes = [];
   let micFrames = 0;
   let state = 'off';
+  // Every switch (on, off, feed, dispose) starts a new generation. Work begun under an older one (a permission prompt answered
+  // late, a graph still being built) is stale: it releases what it acquired itself and never touches the current stream or graph.
+  let generation = 0;
   const setState = (s, detail) => { state = s; onState('mic', s, detail); };
+  const stopStream = (stream) => stream.getTracks().forEach((t) => t.stop());
 
-  // Builds the capture graph. Replaces an earlier graph but leaves micStream alone: micOn acquires the stream first, then builds
-  // the graph on it (v0.2.0 stopped the stream here, so the microphone never came on).
-  async function pipeline(build) {
+  // Builds the capture graph on a context of its own and installs it only if the request is still current; a stale graph is
+  // closed and false is returned. The stream stays with the caller.
+  async function pipeline(build, gen) {
+    const ctx = new AudioContext({ sampleRate: micRate, latencyHint: 'interactive' });
+    let nodes;
+    try {
+      const url = URL.createObjectURL(new Blob([WORKLET], { type: 'text/javascript' }));
+      try { await ctx.audioWorklet.addModule(url); } finally { URL.revokeObjectURL(url); }
+      const node = new AudioWorkletNode(ctx, 'mic-capture', { numberOfInputs: 1, numberOfOutputs: 0, processorOptions: { frame: (micRate * FRAME_MS) / 1000 } });
+      node.port.onmessage = (e) => { if (gen === generation && (state === 'on' || state === 'feeding')) { dev.pushMic(e.data); micFrames++; } };
+      const source = await build(ctx);
+      source.connect(node);
+      nodes = [source, node];
+      await ctx.resume();
+    } catch (err) {
+      ctx.close().catch(() => {});
+      throw err;
+    }
+    if (gen !== generation) {
+      for (const n of nodes) { try { n.disconnect(); } catch { /* already */ } }
+      ctx.close().catch(() => {});
+      return false;
+    }
     closeGraph();
-    micCtx = new AudioContext({ sampleRate: micRate, latencyHint: 'interactive' });
-    const url = URL.createObjectURL(new Blob([WORKLET], { type: 'text/javascript' }));
-    try { await micCtx.audioWorklet.addModule(url); } finally { URL.revokeObjectURL(url); }
-    const node = new AudioWorkletNode(micCtx, 'mic-capture', { numberOfInputs: 1, numberOfOutputs: 0, processorOptions: { frame: (micRate * FRAME_MS) / 1000 } });
-    node.port.onmessage = (e) => { if (state === 'on' || state === 'feeding') { dev.pushMic(e.data); micFrames++; } };
-    const source = await build(micCtx);
-    source.connect(node);
-    micNodes = [source, node];
-    await micCtx.resume();
+    micCtx = ctx;
+    micNodes = nodes;
+    return true;
   }
 
   function closeGraph() {
@@ -100,48 +118,59 @@ export function createAudioIo(dev, { micRate = 16000, onState = () => {} } = {})
   function stopCapture() {
     dev.setMicLive(false);
     closeGraph();
-    micStream?.getTracks().forEach((t) => t.stop());
+    if (micStream) stopStream(micStream);
     micStream = null;
   }
 
   async function micOn() {
     if (state === 'on' || state === 'starting') return state;
+    const gen = ++generation;
     setState('starting');
     resumeSpeaker().catch(() => {});
     if (!navigator.mediaDevices?.getUserMedia) { setState('error', 'unsupported'); return state; }
+    let stream;
     try {
-      micStream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
     } catch (err) {
-      if (state !== 'starting') return state;
+      if (gen !== generation) return state;
       const denied = err?.name === 'NotAllowedError' || err?.name === 'SecurityError';
       setState(denied ? 'denied' : 'error', err?.name ?? String(err));
       return state;
     }
-    if (state !== 'starting') { micStream.getTracks().forEach((t) => t.stop()); micStream = null; return state; } // switched off meanwhile
-    micStream.getAudioTracks()[0]?.addEventListener('ended', () => { stopCapture(); setState('denied', 'ended'); });
+    if (gen !== generation) { stopStream(stream); return state; } // switched off (or on again) meanwhile
+    micStream = stream;
+    stream.getAudioTracks()[0]?.addEventListener('ended', () => {
+      if (micStream !== stream) return;
+      generation++;
+      stopCapture();
+      setState('denied', 'ended');
+    });
+    let installed;
     try {
-      await pipeline((ctx) => ctx.createMediaStreamSource(micStream));
+      installed = await pipeline((ctx) => ctx.createMediaStreamSource(stream), gen);
     } catch (err) {
+      if (gen !== generation) { stopStream(stream); return state; }
       stopCapture();
       setState('error', err?.message ?? String(err));
       return state;
     }
-    state = 'on';
+    if (!installed) { stopStream(stream); return state; } // whoever switched meanwhile owns the current state
     dev.setMicLive(true);
     setState('on');
     return state;
   }
 
-  function micOff() { stopCapture(); setState('off'); }
+  function micOff() { generation++; stopCapture(); setState('off'); }
 
   /** Test hook: play an audio file (any rate) into the microphone channel through the same capture path; back to off when done. */
   async function feedUrl(url, { gain = 1 } = {}) {
     const bytes = await fetch(url).then((r) => { if (!r.ok) throw new Error(`${url} ${r.status}`); return r.arrayBuffer(); });
     let ended;
     const done = new Promise((r) => { ended = r; });
-    if (state === 'on') stopCapture();
+    const gen = ++generation;
+    stopCapture();
     setState('feeding');
-    await pipeline(async (ctx) => {
+    const installed = await pipeline(async (ctx) => {
       const buffer = await ctx.decodeAudioData(bytes);
       const src = ctx.createBufferSource();
       src.buffer = buffer;
@@ -151,10 +180,12 @@ export function createAudioIo(dev, { micRate = 16000, onState = () => {} } = {})
       src.onended = () => ended();
       src.start();
       return g;
-    });
+    }, gen);
+    if (!installed) return;
     dev.setMicLive(true);
     await done;
     await new Promise((r) => setTimeout(r, 200));
+    if (gen !== generation) return;
     stopCapture();
     setState('off');
   }
@@ -165,6 +196,7 @@ export function createAudioIo(dev, { micRate = 16000, onState = () => {} } = {})
     get speakerState() { return out.state === 'running' ? 'running' : 'locked'; },
     stats: () => ({ micFrames, speakerFrames, speaker: out.state, mic: state }),
     dispose() {
+      generation++;
       stopCapture();
       offSpeaker();
       removeEventListener('pointerdown', unlock, true);
