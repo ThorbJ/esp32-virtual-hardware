@@ -146,6 +146,21 @@ test('connects to the local program on the port in the description and reports t
   assert.deepEqual(traffic.slice(0, 2), ['rx', 'tx']);
 });
 
+test('a second session of the same device reports link elsewhere; takeOverLink() moves the connection to it', async () => {
+  const program = await startFakeProgram();
+  cleanup.push(() => program.close());
+  const hostLink = { url: `ws://127.0.0.1:${program.port}/` };
+  const { session: first } = await start({ hostLink });
+  await until(() => first.status.link === 'connected');
+  const { session: second } = await start({ hostLink });
+  await until(() => second.status.link === 'elsewhere');
+  second.takeOverLink();
+  await until(() => second.status.link === 'connected');
+  await until(() => first.status.link === 'elsewhere');
+  await second.dispose(); // the first one gets it back
+  await until(() => first.status.link === 'connected');
+});
+
 test('dispose powers off and reports off', async () => {
   const { session } = await start();
   await until(() => session.status.phase === 'running');

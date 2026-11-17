@@ -7,6 +7,7 @@
 //   const pkg = await loadPackage({ description, fileUrls: { 'firmware/x.mjs': url, … } });     // files stored one by one
 //   const session = await startVirtualDevice({ pkg, viewer, onStatus });
 //   session.repower(); session.setMic(true); session.setCamera(true); session.on('traffic', …); await session.dispose();
+//   session.takeOverLink();  // status.link 'elsewhere': another tab of this browser has the computer connection; connect here instead
 //
 // The page must be cross-origin isolated (COOP same-origin + COEP require-corp): the firmware runs on threads.
 //
@@ -48,9 +49,11 @@ import { connectHostLink, hostLinkUrl } from './host-link.mjs';
 import { createScreenImage, joystickFromPoint, servoJointAngle, uvToPanel } from './geometry.mjs';
 import { createAudioIo } from './audio-io.mjs';
 import { createCameraIo } from './camera-io.mjs';
+import { downloadFile } from './download.mjs';
 
-export { connectHostLink, hostLinkUrl } from './host-link.mjs';
+export { connectHostLink, hostLinkUrl, hostLinkLockName } from './host-link.mjs';
 export { createScreenImage, uvToPanel, servoJointAngle, joystickFromPoint } from './geometry.mjs';
+export { downloadFile } from './download.mjs';
 
 /** A quick click still holds a button this long in device time, so firmware debouncing sees it. */
 export const MIN_PRESS_MS = 100;
@@ -60,13 +63,17 @@ const LOG_LIMIT = 200_000;
  * Load a package and check it (description format, every file present with its size and sha256).
  * source: { archiveUrl } — one package archive; or { description, fileUrls } — the description object and a URL per file path
  * (for packages stored file by file under server-made keys); or { description, baseUrl } — files at baseUrl + their path.
- * onProgress({ loaded, total }) in bytes. Resolves to { description, files: Map<path, Uint8Array> }; rejects with every problem.
+ * onProgress({ loaded, total }) in bytes. Each file is downloaded with downloadFile (download.mjs): a stalled or broken download is
+ * resumed where it stopped; stallMs, retries, retryDelayMs and onRetry({ url, attempt, loaded, reason }) are passed to it, and when
+ * it gives up the error has code 'download_failed'. Resolves to { description, files: Map<path, Uint8Array> }; rejects with every
+ * problem.
  */
-export async function loadPackage(source, { onProgress = () => {}, fetchImpl = globalThis.fetch } = {}) {
+export async function loadPackage(source, { onProgress = () => {}, fetchImpl = globalThis.fetch, stallMs, retries, retryDelayMs, onRetry } = {}) {
+  const net = { fetchImpl, stallMs, retries, retryDelayMs, onRetry };
   let description;
   let files;
   if (source.archiveUrl) {
-    const bytes = await download(fetchImpl, source.archiveUrl, null, (loaded, total) => onProgress({ loaded, total }));
+    const bytes = await downloadFile(source.archiveUrl, { ...net, onProgress: (loaded, total) => onProgress({ loaded, total }) });
     ({ description, files } = await readPackage(bytes));
   } else {
     description = source.description;
@@ -79,7 +86,7 @@ export async function loadPackage(source, { onProgress = () => {}, fetchImpl = g
       const url = urlOf(f.path);
       if (!url) throw new Error(`no URL for ${f.path}`);
       const before = done;
-      files.set(f.path, await download(fetchImpl, url, f.size, (loaded) => onProgress({ loaded: before + loaded, total })));
+      files.set(f.path, await downloadFile(url, { ...net, size: f.size, onProgress: (loaded) => onProgress({ loaded: before + Math.min(loaded, f.size), total }) }));
       done += f.size;
     }
   }
@@ -94,32 +101,6 @@ function assertValid(description) {
   if (issues.length) throw new Error(`${DESCRIPTION_FILE} is not valid:\n${issues.map((i) => `  ${i.path}: ${i.message}`).join('\n')}`);
 }
 
-async function download(fetchImpl, url, expected, progress) {
-  const res = await fetchImpl(url);
-  if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
-  const total = expected ?? (Number(res.headers.get('content-length')) || 0);
-  if (!res.body?.getReader) {
-    const b = new Uint8Array(await res.arrayBuffer());
-    progress(b.byteLength, total || b.byteLength);
-    return b;
-  }
-  const reader = res.body.getReader();
-  const chunks = [];
-  let loaded = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-    loaded += value.byteLength;
-    progress(loaded, Math.max(total, loaded));
-  }
-  const out = new Uint8Array(loaded);
-  let o = 0;
-  for (const c of chunks) { out.set(c, o); o += c.byteLength; }
-  progress(loaded, loaded);
-  return out;
-}
-
 /**
  * Start a virtual device. Options:
  *   pkg            from loadPackage(); or source (as for loadPackage) to load it here, reporting phase 'loading' with progress
@@ -130,10 +111,12 @@ async function download(fetchImpl, url, expected, progress) {
  *   audio, camera  true (default): wire the speaker / microphone / camera channels the description declares (browser only)
  *   firmwareFactory  the firmware module's factory, already loaded (Node, tests); by default it is imported from the package
  * Status: { phase: 'loading' | 'starting' | 'running' | 'off' | 'error', progress: { loaded, total } | null, bootCount,
- *           power: 'on' | 'off' | 'restart-requested' | 'halted', link: 'none' | 'waiting' | 'connected' | 'closed',
+ *           power: 'on' | 'off' | 'restart-requested' | 'halted', link: 'none' | 'waiting' | 'connected' | 'elsewhere' | 'closed',
  *           linkAttempts, speaker, mic, camera: 'none' | state, error: { code, message } | null }
  * Session: status, log (device log text), description, device (the virtual device interface), on(event, fn) for 'status', 'log' (text),
- *   'traffic' ({ direction: 'rx' | 'tx', bytes }), 'power'; repower(), setMic(on), setCamera(on), audio, camera, dispose().
+ *   'traffic' ({ direction: 'rx' | 'tx', bytes }), 'power'; repower(), setMic(on), setCamera(on), takeOverLink(), audio, camera, dispose().
+ * The computer connection is one tab at a time (host-link.mjs): link 'elsewhere' = another tab of this browser holds it (this one opens no
+ * socket and connects by itself when that tab lets go); takeOverLink() connects here at once and leaves the other tab 'elsewhere'.
  */
 export async function startVirtualDevice(options) {
   const { viewer = {}, onStatus = () => {}, hostLink = true, audio: wantAudio = true, camera: wantCamera = true, WebSocketImpl } = options;
@@ -308,6 +291,7 @@ export async function startVirtualDevice(options) {
     },
     setMic(on) { return audio && d.channels.in.includes('mic') ? (on ? audio.micOn() : audio.micOff()) : null; },
     setCamera(on) { return camera ? (on ? camera.cameraOn() : camera.cameraOff()) : null; },
+    takeOverLink() { link?.takeOver(); },
     async dispose() {
       if (disposed) return;
       disposed = true;
