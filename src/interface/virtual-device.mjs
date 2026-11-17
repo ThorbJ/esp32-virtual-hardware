@@ -142,10 +142,16 @@ export class VirtualDevice {
   /** fn({width, height, format}) → Uint8Array (JPEG…), null, or a Promise of them; called when the firmware wants a frame (it waits up to 500 ms). */
   setCameraSource(fn) { this.cameraSource = fn; }
 
-  /** Bytes from the computer to the device. */
+  /**
+   * Bytes from the computer to the device. Also hands out what the device has sent the computer so far (and takes the screen's latest
+   * frame, so a panel waiting for its frame to be taken goes on): in a hidden tab the page's poll timer runs about once a second or
+   * stalls for 10 s and more, while network events keep arriving, so replies to the computer go out at the latest on its next message.
+   */
   hostWrite(bytes) {
     this._pending.hostRx.push(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes));
     this._flushHostRx();
+    this._pumpHostTx();
+    if (this.rings) this._pollScreen();
   }
 
   setHostPresent(present) {
@@ -234,13 +240,19 @@ export class VirtualDevice {
     this.emit('log', text);
   }
 
+  /** What the device sent the computer since the last look, as one 'hostTx' event. */
+  _pumpHostTx() {
+    if (!this.rings) return;
+    const tx = this.rings.hostTx.drain();
+    if (tx) this.emit('hostTx', tx);
+  }
+
   _poll() {
     if (!this.rings) return;
     const r = this.rings;
     const log = r.log.drain();
     if (log) this._appendLog(new TextDecoder().decode(log));
-    const tx = r.hostTx.drain();
-    if (tx) this.emit('hostTx', tx);
+    this._pumpHostTx();
     const servo = r.servo.drain();
     if (servo) {
       const v = new DataView(servo.buffer);
