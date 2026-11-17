@@ -72,6 +72,15 @@ test('a node is turned by one servo only (a child joint already carries its node
   assert.deepEqual(rules(d), ['servos[1].nodes[1] duplicate']);
 });
 
+test('a servo can turn unnamed parts: { node, path } reaches them from a named node by glTF child indexes', () => {
+  const d = sample();
+  d.servos[0].nodes.push({ node: 'internal-pack', path: [9] }, { node: 'internal-pack', path: [10, 0] });
+  assert.deepEqual(rules(d), []);
+  d.servos[0].nodes.push({ node: 'internal-pack', path: [9] }, { node: 'internal-pack', path: [] }, { node: 'x', path: [1], name: 'y' });
+  assert.deepEqual(rules(d), ['servos[0].nodes[3] duplicate', 'servos[0].nodes[4].path empty', 'servos[0].nodes[5].name unknown_field']);
+  assert.deepEqual(referencedNodes(d), ['arm', 'button', 'internal-pack', 'screen', 'servo', 'x']);
+});
+
 test('nodes to hide while the device runs: name patterns with * wildcards, each once', () => {
   const d = sample();
   d.hide = ['official-screen-frame-*', 'sticker'];

@@ -29,7 +29,8 @@
 //       intersection.uv); point and nodeCenter = the hit and the node's bounding-box centre in Kit model coordinates (mm).
 //       While a pick is held the viewer should not rotate the camera.
 //   setRotation(nodes, turns)
-//       Move these nodes from their place in the Kit model by a list of turns [{ pivot, axis, angleDeg }, …], applied in order:
+//       nodes: names, or { node, path } = the unnamed node reached from the named one by glTF `children` indexes (as for the
+//       screen face). Move these nodes from their place in the Kit model by a list of turns [{ pivot, axis, angleDeg }, …], applied in order:
 //       each turns the result of the one before by angleDeg about the axis through pivot (right-hand rule). The first is the
 //       servo's own joint, the next the joint it is mounted on, and so on; every pivot and axis is where it is in the Kit model
 //       as loaded (rest pose), so the composition is exact (motion = turns[n-1] ∘ … ∘ turns[0]). pivot is [x, y, z] (mm) or

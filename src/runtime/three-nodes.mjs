@@ -21,12 +21,32 @@ export function createNodeControls(THREE, model, parser) {
   model.traverse((o) => rest.set(o, { local: o.matrix.clone(), inModel: inModel(o) }));
   const restCentre = new Map();
 
-  /** The first node of that glTF name, depth first (as the description means it). */
-  function node(name) {
+  // glTF node index ↔ object (GLTFLoader parser.associations), for nodes reached by child index paths.
+  const indexOf = new Map();
+  for (const [o, m] of parser?.associations ?? []) if (o.isObject3D && m?.nodes !== undefined && !indexOf.has(m.nodes)) indexOf.set(m.nodes, o);
+  const nodeIndex = (o) => parser?.associations?.get(o)?.nodes;
+  /** Follow glTF `children` indexes from an object; the object reached. */
+  function down(from, path, what) {
+    if (!path?.length) return from;
+    const json = parser?.json;
+    let i = nodeIndex(from);
+    if (!json || i === undefined) throw new Error(`${what}: a path needs the GLTFLoader parser`);
+    for (const step of path) {
+      i = json.nodes[i]?.children?.[step];
+      if (i === undefined) throw new Error(`${what}: ${nameOf(from)} has no node at path ${JSON.stringify(path)}`);
+    }
+    const o = indexOf.get(i);
+    if (!o) throw new Error(`${what}: node ${i} is not in the scene`);
+    return o;
+  }
+
+  /** A node reference: a name (the first node of that glTF name, depth first) or { node, path } (an unnamed node under it). */
+  function node(ref) {
+    const name = typeof ref === 'string' ? ref : ref.node;
     let found = null;
     model.traverse((o) => { if (!found && nameOf(o) === name) found = o; });
     if (!found) throw new Error(`the Kit model has no node ${name}`);
-    return found;
+    return typeof ref === 'string' ? found : down(found, ref.path, 'node');
   }
   const centreAtRest = (name) => {
     if (!restCentre.has(name)) {
@@ -56,25 +76,10 @@ export function createNodeControls(THREE, model, parser) {
   }
 
   // ---------- the screen face ----------
-  const indexOf = new Map(); // glTF node index → object
-  for (const [o, m] of parser?.associations ?? []) if (o.isObject3D && m?.nodes !== undefined && !indexOf.has(m.nodes)) indexOf.set(m.nodes, o);
-  const nodeIndex = (o) => parser?.associations?.get(o)?.nodes;
-
   /** The mesh of the screen face: { node, face: { path, primitive } } as in the description. */
   function faceMesh({ node: name, face = {} }) {
-    let at = node(name);
     const path = face.path ?? [];
-    if (path.length) {
-      const json = parser?.json;
-      let i = nodeIndex(at);
-      if (!json || i === undefined) throw new Error('screen.face.path needs the GLTFLoader parser');
-      for (const step of path) {
-        i = json.nodes[i]?.children?.[step];
-        if (i === undefined) throw new Error(`screen face: ${name} has no child at path ${JSON.stringify(path)}`);
-      }
-      at = indexOf.get(i);
-      if (!at) throw new Error(`screen face: node ${i} is not in the scene`);
-    }
+    const at = down(node(name), path, 'screen face');
     const k = face.primitive ?? 0;
     if (at.isMesh) {
       if (k !== 0) throw new Error(`screen face: the mesh under ${name} has one primitive, not ${k + 1}`);

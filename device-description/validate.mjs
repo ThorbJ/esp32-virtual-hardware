@@ -208,9 +208,18 @@ export function validateDeviceDescription(d) {
       if (v.array(`${p}.nodes`, s.nodes, true)) {
         if (s.nodes.length === 0) add(`${p}.nodes`, 'empty', 'a servo turns at least one node');
         s.nodes.forEach((n, j) => {
-          if (!v.string(`${p}.nodes[${j}]`, n)) return;
-          if (turned.has(n)) add(`${p}.nodes[${j}]`, 'duplicate', `${n} is already turned by another servo (a joint on a parent joint moves with it anyway)`);
-          turned.add(n);
+          const q = `${p}.nodes[${j}]`;
+          if (n !== null && typeof n === 'object' && !Array.isArray(n)) { // { node, path }: an unnamed node under a named one
+            v.fields(q, n, ['node', 'path'], ['node', 'path']);
+            const named = v.string(`${q}.node`, n.node);
+            let pathOk = v.array(`${q}.path`, n.path);
+            if (pathOk && n.path.length === 0) { add(`${q}.path`, 'empty', `${q}.path must have at least one step (a name alone is written as a string)`); pathOk = false; }
+            if (pathOk) pathOk = n.path.map((k, i) => v.integer(`${q}.path[${i}]`, k, 0, 65535)).every(Boolean);
+            if (!named || !pathOk) return;
+          } else if (!v.string(q, n)) return;
+          const key = nodeRefKey(n);
+          if (turned.has(key)) add(q, 'duplicate', `${key} is already turned by another servo (a joint on a parent joint moves with it anyway)`);
+          turned.add(key);
         });
       }
       if (Array.isArray(s.pivot)) v.vector(`${p}.pivot`, s.pivot);
@@ -262,13 +271,24 @@ export function validateDeviceDescription(d) {
   return { ok: issues.length === 0, issues };
 }
 
-/** Every Kit model node the description refers to by name (screen, inputs, servos and servo pivots), sorted, each once. hide patterns are not names. */
+/** A servo node reference as one string: the name, or `name/i/j` for { node, path }. */
+export function nodeRefKey(ref) {
+  return typeof ref === 'string' ? ref : `${ref.node}/${ref.path.join('/')}`;
+}
+
+/**
+ * Every Kit model node the description refers to by name (screen, inputs, servos, the named starts of servo node paths and
+ * servo pivots), sorted, each once. hide patterns are not names.
+ */
 export function referencedNodes(d) {
   const out = new Set();
   if (typeof d?.screen?.node === 'string') out.add(d.screen.node);
   for (const i of Array.isArray(d?.inputs) ? d.inputs : []) if (typeof i?.node === 'string') out.add(i.node);
   for (const s of Array.isArray(d?.servos) ? d.servos : []) {
-    for (const n of Array.isArray(s?.nodes) ? s.nodes : []) if (typeof n === 'string') out.add(n);
+    for (const n of Array.isArray(s?.nodes) ? s.nodes : []) {
+      if (typeof n === 'string') out.add(n);
+      else if (typeof n?.node === 'string') out.add(n.node);
+    }
     if (typeof s?.pivot?.node === 'string') out.add(s.pivot.node);
   }
   return [...out].sort();
@@ -299,8 +319,13 @@ export function checkNodesInModel(d, model) {
   const need = (path, n) => { if (typeof n === 'string' && !byName.has(n)) add(path, 'unknown_node', `the Kit model has no node ${n}`); };
   need('screen.node', d?.screen?.node);
   (Array.isArray(d?.inputs) ? d.inputs : []).forEach((inp, i) => need(`inputs[${i}].node`, inp?.node));
+  const walk = (from, path) => { let at = from; for (const step of path) { at = nodes[at]?.children?.[step]; if (at === undefined) return undefined; } return at; };
   (Array.isArray(d?.servos) ? d.servos : []).forEach((s, i) => {
-    (Array.isArray(s?.nodes) ? s.nodes : []).forEach((n, j) => need(`servos[${i}].nodes[${j}]`, n));
+    (Array.isArray(s?.nodes) ? s.nodes : []).forEach((n, j) => {
+      if (typeof n === 'string' || typeof n?.node !== 'string' || !Array.isArray(n.path)) { need(`servos[${i}].nodes[${j}]`, n); return; }
+      if (!byName.has(n.node)) add(`servos[${i}].nodes[${j}]`, 'unknown_node', `the Kit model has no node ${n.node}`);
+      else if (walk(byName.get(n.node), n.path) === undefined) add(`servos[${i}].nodes[${j}]`, 'unknown_node', `${n.node} has no node at path ${JSON.stringify(n.path)}`);
+    });
     need(`servos[${i}].pivot.node`, s?.pivot?.node);
   });
   (Array.isArray(d?.hide) ? d.hide : []).forEach((h, i) => {
@@ -308,12 +333,9 @@ export function checkNodesInModel(d, model) {
   });
   if (typeof d?.screen?.node === 'string' && byName.has(d.screen.node)) {
     const face = d.screen.face ?? {};
-    let at = byName.get(d.screen.node);
     const path = Array.isArray(face.path) ? face.path : [];
-    for (const step of path) {
-      at = nodes[at]?.children?.[step];
-      if (at === undefined) { add('screen.face.path', 'bad_screen_face', `${d.screen.node} has no child at screen.face.path ${JSON.stringify(path)}`); return issues; }
-    }
+    const at = walk(byName.get(d.screen.node), path);
+    if (at === undefined) { add('screen.face.path', 'bad_screen_face', `${d.screen.node} has no child at screen.face.path ${JSON.stringify(path)}`); return issues; }
     const where = path.length ? `the node at screen.face.path ${JSON.stringify(path)} under ${d.screen.node}` : d.screen.node;
     const mesh = gltf.meshes?.[nodes[at]?.mesh];
     const k = face.primitive ?? 0;

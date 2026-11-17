@@ -27,7 +27,7 @@ Nothing else: no keys, no personal data, no other folders. `src/package/index.mj
 
 ## Fields
 
-Paths are written `a.b[0].c`. "Node" always means the name of a node in the Kit model GLB the package is used with: the first node of that name in the default scene, depth first in `children` order (what three.js `getObjectByName` finds). "Kit model coordinates" are those of the GLB scene as it is (mm), whatever unnamed, rotated or scaled groups the nodes sit under. A description never needs names the Kit model does not have: unnamed parts are reached by index path from a named node (`screen.face`), so Kit models are used as they are published.
+Paths are written `a.b[0].c`. "Node" always means the name of a node in the Kit model GLB the package is used with: the first node of that name in the default scene, depth first in `children` order (what three.js `getObjectByName` finds). "Kit model coordinates" are those of the GLB scene as it is (mm), whatever unnamed, rotated or scaled groups the nodes sit under. A description never needs names the Kit model does not have: unnamed parts are reached by index path from a named node (`screen.face`, `{ node, path }` in `servos[].nodes`), so Kit models are used as they are published.
 
 ### Top level
 
@@ -102,7 +102,7 @@ Each is one clickable part; `kind` decides the rest. *Rule*: the input's channel
 |---|---|
 | `id` | Interface servo number (0–31, each once). |
 | `parent` | Optional: the `id` of the servo joint this joint is mounted on (a head tilt on a head turn). The joint then moves with its parent: its nodes turn by this joint, then by the parent joint, and so on up. *Rules*: the parent exists (`unknown_servo`); following parents never comes back (`servo_cycle`). |
-| `nodes` | The nodes this joint turns (at least one). *Rule*: a node is listed under one servo only (`duplicate`); a joint's nodes follow its parent joint without being listed there. |
+| `nodes` | The nodes this joint turns (at least one). Each is a node name, or `{ node, path }` for an unnamed node: start at the named node and follow `path` (indexes into glTF `children`, at least one step), as for `screen.face` (`{ "node": "internal-pack", "path": [9] }`). *Rules*: a node is listed under one servo only (`duplicate`); a joint's nodes follow its parent joint without being listed there; `checkNodesInModel` checks that the path leads to a node (`unknown_node`). |
 | `pivot` | The point the axis goes through: `[x, y, z]` in Kit model coordinates, or `{ node }` = that node's bounding-box centre in the Kit model. For a joint with a parent, pivot and axis are where they are in the Kit model as it is (all joints at rest). |
 | `axis` | Axis direction `[x, y, z]` (not zero); positive angles turn by the right-hand rule. |
 | `zeroDeg` | The servo angle at which the nodes are where the Kit model has them. |
@@ -146,7 +146,8 @@ A format 1 description is refused (`formatVersion` `unsupported_version`); rebui
 | `screen.materialIndex` | Removed. `screen.face { path?, primitive? }` points at the face mesh and primitive through unnamed nodes (the face was "the first mesh under the node", which is not always the face). |
 | — | `screen.flipX`, `screen.flipY`: mirror the picture after turning it, for faces whose texture coordinates run the other way. |
 | Every servo turns its nodes from their place in the Kit model | `servos[].parent`: a joint mounted on another joint moves with it. A node is listed under one servo only. |
+| `servos[].nodes`: names only | Also `{ node, path }`: unnamed parts under a named node. |
 | — | `hide`: Kit model nodes hidden while the device runs. |
 | `checkNodesInModel(d, glbNodeNames(bytes))` | `checkNodesInModel(d, bytes)`: it also checks `hide` and `screen.face`, so it needs the model, not only its names (a list of names throws). |
 
-Viewer hooks changed with it (header of `src/runtime/index.mjs`): `setScreenImage({ node, face }, image)`, `setRotation(nodes, turns[])` and the new `setHidden(patterns, hidden)`; every motion is in Kit model coordinates and must be converted into each node's parent space.
+Viewer hooks changed with it (header of `src/runtime/index.mjs`): `setScreenImage({ node, face }, image)`, `setRotation(nodes, turns[])` (nodes may be `{ node, path }`) and the new `setHidden(patterns, hidden)`; every motion is in Kit model coordinates and must be converted into each node's parent space.

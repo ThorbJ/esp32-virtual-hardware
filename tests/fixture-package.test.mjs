@@ -76,6 +76,11 @@ test('the same check reads GLB bytes; a list of names is refused (the face needs
   assert.throws(() => checkNodesInModel(d, ['screen', 'arm']), /GLB/);
 });
 
+test('a servo node given by path from a named node must lead to a node', () => {
+  assert.deepEqual(check({ servos: [{ nodes: [{ node: 'lcd', path: [0, 1] }, { node: 'lcd', path: [0, 2] }, { node: 'pack', path: [0] }], pivot: [0, 0, 0] }] }),
+    ['servos[0].nodes[1] unknown_node', 'servos[0].nodes[2] unknown_node']);
+});
+
 test('every hide pattern must match at least one node; * matches any run of characters', () => {
   assert.deepEqual(check({ hide: ['official-screen-frame-*', 'lcd-*', '*glass', 'arm'] }), []);
   assert.deepEqual(check({ hide: ['official-frame-*', 'ar'] }), ['hide[0] unknown_node', 'hide[1] unknown_node']);

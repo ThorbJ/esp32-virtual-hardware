@@ -82,6 +82,13 @@ test('turns are applied in order: the own joint first, then the joint it rides o
   assert.deepEqual(centre(model, button), [8, 0, 0]);
 });
 
+test('an unnamed node reached by path from a named one turns like a named one', async () => {
+  const { model, nodes } = await load();
+  const face = model.getObjectByName('lcd').children[0].children[0]; // centre (0, 36, 15.5)
+  nodes.setRotation([{ node: 'lcd', path: [0, 0] }], [{ pivot: [0, 36, 0], axis: [0, 1, 0], angleDeg: 90 }]);
+  assert.deepEqual(centre(model, face), [15.5, 36, 0]);
+});
+
 test('a pivot given as a node is that node\'s centre where the Kit model has it, even after the node has moved', async () => {
   const { model, nodes } = await load();
   nodes.setOffset(['servo'], [0, 100, 0]);

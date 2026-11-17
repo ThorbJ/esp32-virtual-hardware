@@ -20,6 +20,7 @@ const cases = {
   'screen face, mirrored picture': (d) => { d.screen.face = { path: [0, 17, 0], primitive: 0 }; d.screen.flipY = true; d.screen.flipX = false; return d; },
   'a servo joint on another one': (d) => { d.servos.push({ id: 1, parent: 0, nodes: ['head'], pivot: [0, 87, -2], axis: [1, 0, 0], zeroDeg: 90, direction: 1, scale: 1 }); return d; },
   'hidden nodes': (d) => { d.hide = ['official-screen-frame-*']; return d; },
+  'unnamed servo node by path': (d) => { d.servos[0].nodes.push({ node: 'internal-pack', path: [9] }); return d; },
 };
 const broken = {
   'format version 1': (d) => { d.formatVersion = 1; return d; },
@@ -30,6 +31,8 @@ const broken = {
   'parent not an integer': (d) => { d.servos[0].parent = 'x'; return d; },
   'empty hide pattern': (d) => { d.hide = ['']; return d; },
   'hide pattern twice': (d) => { d.hide = ['a', 'a']; return d; },
+  'servo node path empty': (d) => { d.servos[0].nodes.push({ node: 'internal-pack', path: [] }); return d; },
+  'servo node object without node': (d) => { d.servos[0].nodes.push({ path: [1] }); return d; },
   'unknown top-level field': (d) => { d.extra = 1; return d; },
   'unknown nested field': (d) => { d.screen.nod = 'x'; return d; },
   'short commit': (d) => { d.firmware.upstream.commit = 'abc'; return d; },
