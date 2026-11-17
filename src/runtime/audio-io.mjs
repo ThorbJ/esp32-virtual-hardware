@@ -74,8 +74,10 @@ export function createAudioIo(dev, { micRate = 16000, onState = () => {} } = {})
   let state = 'off';
   const setState = (s, detail) => { state = s; onState('mic', s, detail); };
 
+  // Builds the capture graph. Replaces an earlier graph but leaves micStream alone: micOn acquires the stream first, then builds
+  // the graph on it (v0.2.0 stopped the stream here, so the microphone never came on).
   async function pipeline(build) {
-    stopCapture();
+    closeGraph();
     micCtx = new AudioContext({ sampleRate: micRate, latencyHint: 'interactive' });
     const url = URL.createObjectURL(new Blob([WORKLET], { type: 'text/javascript' }));
     try { await micCtx.audioWorklet.addModule(url); } finally { URL.revokeObjectURL(url); }
@@ -87,14 +89,19 @@ export function createAudioIo(dev, { micRate = 16000, onState = () => {} } = {})
     await micCtx.resume();
   }
 
-  function stopCapture() {
-    dev.setMicLive(false);
+  function closeGraph() {
     for (const n of micNodes) { try { n.disconnect(); } catch { /* already */ } }
     micNodes = [];
-    micStream?.getTracks().forEach((t) => t.stop());
-    micStream = null;
     micCtx?.close().catch(() => {});
     micCtx = null;
+  }
+
+  /** Everything off: the graph, the computer's microphone (released) and the firmware's mic (not live). */
+  function stopCapture() {
+    dev.setMicLive(false);
+    closeGraph();
+    micStream?.getTracks().forEach((t) => t.stop());
+    micStream = null;
   }
 
   async function micOn() {

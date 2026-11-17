@@ -42,6 +42,8 @@ const broken = {
   'unknown channel': (d) => { d.channels.in.push('wifi'); return d; },
   'unknown input kind': (d) => { d.inputs[0].kind = 'knob'; return d; },
   'path outside package folders': (d) => { d.files[0].path = '../x.mjs'; return d; },
+  'path with a . part': (d) => { d.files[0].path = 'firmware/./x.mjs'; return d; },
+  'file name with ..': (d) => { d.files[0].path = 'firmware/x..mjs'; d.runtime.module = 'firmware/x..mjs'; return d; },
   'bad sha256': (d) => { d.files[0].sha256 = 'XYZ'; return d; },
   'direction 2': (d) => { d.servos[0].direction = 2; return d; },
   'missing firmware.license': (d) => { delete d.firmware.license; return d; },

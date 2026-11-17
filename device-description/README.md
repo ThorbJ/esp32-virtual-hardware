@@ -68,7 +68,7 @@ Paths are written `a.b[0].c`. "Node" always means the name of a node in the Kit 
 
 ### `files[]`
 
-`{ path, size, sha256 }`: path under `firmware/` or `licenses/` (letters, digits, `.`, `_`, `-`, `/`; no `.` or `..` parts; each once), size in bytes, sha256 in lower-case hex. *Rule*: the package holds exactly these files plus `device.json`, with these sizes and hashes (`checkPackageFiles`).
+`{ path, size, sha256 }`: path under `firmware/` or `licenses/` (letters, digits, `.`, `_`, `-`, `/`; no empty or `.` parts and no `..` anywhere, not even inside a name; each once; `isPackageFilePath(path)` is this rule, for programs that store or serve package files), size in bytes, sha256 in lower-case hex. *Rule*: the package holds exactly these files plus `device.json`, with these sizes and hashes (`checkPackageFiles`).
 
 ### `screen`
 
@@ -126,7 +126,7 @@ Joint angle = `direction × scale × (servo angle − zeroDeg)`, clamped to the 
 ## Using the validator
 
 ```js
-import { validateDeviceDescription, checkPackageFiles, checkNodesInModel, referencedNodes, nodeNameMatches } from 'esp32-virtual-hardware/device-description';
+import { validateDeviceDescription, checkPackageFiles, checkNodesInModel, referencedNodes, nodeNameMatches, isPackageFilePath } from 'esp32-virtual-hardware/device-description';
 
 const { ok, issues } = validateDeviceDescription(description);   // structure and rules
 const fileIssues = await checkPackageFiles(description, files);   // files: Map<path, Uint8Array> from readPackage()
