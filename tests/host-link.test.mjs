@@ -77,3 +77,49 @@ test('when the browser refuses to even create the socket, every retry is reporte
   for (const n of [1, 2, 3, 4]) assert.ok(waiting.includes(n), `attempt ${n} reported: ${JSON.stringify(reports)}`);
   assert.equal(link.state, 'closed');
 });
+
+// Desktop programs take one virtual device at a time and a newer connection replaces the older one: two tabs of the same page
+// would knock each other off every retry. A link holds the browser's lock for its address (Web Locks: one per origin, shared by
+// every tab), so only one tab connects; the others wait without trying, and one of them can take the connection over.
+const unplugged = () => ({ on: () => () => {}, setHostPresent: () => {}, hostWrite: () => {} });
+const untilState = async (link, s, ms = 3000) => { const end = Date.now() + ms; while (link.state !== s) { if (Date.now() > end) throw new Error(`timed out waiting for ${s}, state ${link.state}`); await sleep(5); } };
+
+test('two pages with the same device: only one connects, the other waits without trying and can take the connection over', async () => {
+  const program = await startFakeProgram();
+  cleanup.push(() => program.close());
+  const url = `ws://127.0.0.1:${program.port}/`;
+  const first = connectHostLink(unplugged(), { url, retryMs: 20 });
+  cleanup.push(() => first.close());
+  await untilState(first, 'connected');
+  const states = [];
+  const second = connectHostLink(unplugged(), { url, retryMs: 20, onState: (s) => states.push(s) });
+  cleanup.push(() => second.close());
+  await untilState(second, 'elsewhere');
+  await sleep(200);
+  assert.equal(program.origins.length, 1, 'the second page never opened a socket');
+  assert.equal(second.attempts, 0);
+  assert.deepEqual(states, ['elsewhere']);
+
+  second.takeOver();
+  await untilState(second, 'connected');
+  await untilState(first, 'elsewhere');
+  await sleep(200);
+  assert.equal(program.origins.length, 2, 'the page that lost the connection does not try again');
+
+  // The page holding the connection goes away (closed tab, version switch): the waiting one connects by itself.
+  second.close();
+  await untilState(first, 'connected');
+  assert.equal(program.origins.length, 3);
+});
+
+test('without Web Locks (or with locks: null) a link connects as before', async () => {
+  const program = await startFakeProgram();
+  cleanup.push(() => program.close());
+  const url = `ws://127.0.0.1:${program.port}/`;
+  const a = connectHostLink(unplugged(), { url, retryMs: 20, locks: null });
+  const b = connectHostLink(unplugged(), { url, retryMs: 20, locks: null });
+  cleanup.push(() => a.close(), () => b.close());
+  await sleep(100);
+  assert.ok(program.origins.length >= 2);
+  b.takeOver(); // nothing to take over: no-op
+});
