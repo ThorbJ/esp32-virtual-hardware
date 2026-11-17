@@ -123,3 +123,28 @@ test('without Web Locks (or with locks: null) a link connects as before', async 
   assert.ok(program.origins.length >= 2);
   b.takeOver(); // nothing to take over: no-op
 });
+
+// A hidden tab: the browser runs the page's timers about once a second, or not at all for 10 s and more, but network events still
+// arrive (the desktop app sends at least a heartbeat every 2 s). So the device's replies are handed out on every write from the
+// computer, not only by the poll timer: a reply waits at most until the computer's next message.
+test('with the poll timer stalled (hidden tab), replies to the computer still go out on its next message', async () => {
+  const { dev } = await powerOnTestDevice();
+  cleanup.push(() => dev.powerOff());
+  await sleep(300); // booted
+  const sentAt = new Map(); // byte value → when written
+  const lateness = [];
+  dev.on('hostTx', (bytes) => { for (const b of bytes) if (sentAt.has(b)) { lateness.push(Date.now() - sentAt.get(b)); sentAt.delete(b); } });
+  dev.setHostPresent(true);
+  clearInterval(dev.timer); // the page's timer stalls
+  const start = Date.now();
+  let b = 0x30;
+  while (Date.now() - start < 12_000) {
+    sentAt.set(b, Date.now());
+    dev.hostWrite(Uint8Array.of(b));
+    b++;
+    await sleep(500);
+  }
+  dev.timer = setInterval(() => dev._poll(), 4); // wakes again (powerOff clears it)
+  assert.ok(lateness.length >= 20, `echoes while stalled: ${lateness.length}`);
+  assert.ok(Math.max(...lateness) <= 1100, `slowest reply ${Math.max(...lateness)} ms`);
+});

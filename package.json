@@ -1,6 +1,6 @@
 {
   "name": "esp32-virtual-hardware",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Run unmodified ESP32 firmware in the browser: shared virtual hardware, the virtual device interface, the device description format and the web runtime.",
   "license": "MIT",
   "type": "module",
