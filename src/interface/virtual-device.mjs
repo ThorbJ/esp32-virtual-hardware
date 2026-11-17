@@ -9,6 +9,8 @@
 //
 // In:  pressButton / setJoystick / touch / pushMic / setMicLive / setCameraSource / hostWrite / setHostPresent
 // Out: events screen (frames carry the device time t) / servo / speaker / hostTx / log / power / tick; clockMs = device clock
+//      servo { id, angle, t, pulseUs }: t = device time of the change. speaker { sampleRate, channels, samples, t }: t = device
+//      time (ms) when the chunk was taken from the speaker ring; its samples were written at or before t (within one poll).
 // description: anything with `channels: { in: [...], out: [...] }` (a device description has it).
 import { INPUT_CHANNELS, OUTPUT_CHANNELS } from './channels.mjs';
 import { CAMERA_FORMAT, INPUT, MAGIC, PIXEL, POWER, RING, Ring, TOUCH_PHASE, VERSION, W, WORDS } from './io-layout.mjs';
@@ -252,6 +254,7 @@ export class VirtualDevice {
         sampleRate: this._word('speakerRate'),
         channels: this._word('speakerChannels'),
         samples: new Int16Array(spk.buffer, 0, spk.length >> 1),
+        t: this._word('clockMs'),
       });
     }
     this._flushHostRx();

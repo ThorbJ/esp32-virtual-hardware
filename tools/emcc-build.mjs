@@ -6,9 +6,9 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'no
 import os from 'node:os';
 import path from 'node:path';
 
-function run(cmd, args, { quiet = false } = {}) {
+function run(cmd, args, { quiet = false, cwd } = {}) {
   return new Promise((resolve, reject) => {
-    const p = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const p = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], cwd });
     let out = '';
     p.stdout.on('data', (d) => { out += d; });
     p.stderr.on('data', (d) => { out += d; });
@@ -80,6 +80,17 @@ export async function compileAll(units, { objDir, force = false, jobs = Math.max
   return objs;
 }
 
+/** Which of these local folders a built module's text names (it must name none: packages are public and run anywhere). */
+export function localPathsIn(text, dirs) {
+  return dirs.filter((d) => d && d.split(/[\\/]/).filter(Boolean).length >= 2 && text.includes(d)); // never '/' or a drive root
+}
+
+/**
+ * Link the firmware module `out` (absolute path; its side files .wasm / .data land next to it). The link runs in out's folder
+ * with a relative -o: emscripten writes the -o path of the .data file into the module, and an absolute one would name the
+ * build machine's folders and break loading elsewhere. Paths in flags (e.g. --preload-file src@dst) must be absolute.
+ * Fails when the linked module still names the output folder or the working folder.
+ */
 export async function link(objs, { out, flags, force = false }) {
   mkdirSync(path.dirname(out), { recursive: true });
   const newest = Math.max(...objs.map(mtime));
@@ -92,6 +103,8 @@ export async function link(objs, { out, flags, force = false }) {
   console.log(`  linking ${path.basename(out)} …`);
   const rsp = `${out}.objs.rsp`;
   writeFileSync(rsp, objs.map((o) => `"${o}"`).join('\n'));
-  await run('em++', [`@${rsp}`, ...flags, '-o', out]);
+  await run('em++', [`@${path.resolve(rsp)}`, ...flags, '-o', path.basename(out)], { cwd: path.dirname(path.resolve(out)) });
+  const leaked = localPathsIn(readFileSync(out, 'latin1'), [path.dirname(path.resolve(out)), process.cwd()]);
+  if (leaked.length) throw new Error(`${path.basename(out)} names local folders (${leaked.join(', ')}): check the link flags for relative or local paths`);
   writeFileSync(stampFile, stamp);
 }

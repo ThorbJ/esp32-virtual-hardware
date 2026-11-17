@@ -1,6 +1,6 @@
 {
   "name": "esp32-virtual-hardware",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Run unmodified ESP32 firmware in the browser: shared virtual hardware, the virtual device interface, the device description format and the web runtime.",
   "license": "MIT",
   "type": "module",
@@ -19,6 +19,7 @@
     "./package": "./src/package/index.mjs",
     "./runtime": "./src/runtime/index.mjs",
     "./runtime/three-viewer": "./src/runtime/three-viewer.mjs",
+    "./runtime/three-nodes": "./src/runtime/three-nodes.mjs",
     "./tools/*": "./tools/*",
     "./fixtures/*": "./fixtures/*",
     "./package.json": "./package.json"

@@ -71,6 +71,7 @@ test('powers on, draws the screen on the screen node, and reports running', asyn
   await until(() => viewer.images.length > 3);
   const img = viewer.images.at(-1);
   assert.equal(img.node, 'screen');
+  assert.equal(img.face, undefined);
   assert.equal(img.width, 160);
   assert.equal(img.height, 128);
   assert.equal(session.status.phase, 'running');
@@ -80,17 +81,49 @@ test('powers on, draws the screen on the screen node, and reports running', asyn
 test('clicking the button node presses the button: the part moves in, the picture changes, the servo turns its parts', async () => {
   const { session, viewer } = await start();
   await until(() => viewer.images.length > 3 && viewer.rotations.has('arm'));
-  assert.equal(viewer.rotations.get('arm').angleDeg, -0.09); // 90° at boot: duty 1228/16384 of 20 ms = 1499 µs = 89.91°
+  assert.equal(viewer.rotations.get('arm')[0].angleDeg, -0.09); // 90° at boot: duty 1228/16384 of 20 ms = 1499 µs = 89.91°
   assert.ok(viewer.pickable.includes('button'));
   viewer.pick('button', 'down');
   assert.deepEqual(viewer.offsets.get('button'), [0, 0, -1.5]);
   viewer.pick('button', 'up');
   await until(() => viewer.offsets.get('button') === null);
   await until(() => { const [r, , b] = viewer.lastPixel(80, 100); return r > 200 && b < 40; });
-  await until(() => Math.abs(viewer.rotations.get('arm').angleDeg - 60) < 0.5);
-  assert.deepEqual(viewer.rotations.get('arm').pivot, [20, 69, 0]);
-  assert.deepEqual(viewer.rotations.get('arm').axis, [0, 1, 0]);
+  await until(() => Math.abs(viewer.rotations.get('arm')[0].angleDeg - 60) < 0.5);
+  assert.equal(viewer.rotations.get('arm').length, 1);
+  assert.deepEqual(viewer.rotations.get('arm')[0].pivot, [20, 69, 0]);
+  assert.deepEqual(viewer.rotations.get('arm')[0].axis, [0, 1, 0]);
   await until(() => session.log.includes('button pressed (1)'));
+});
+
+// The test device's description with additions its firmware does not need: the runtime only follows the description.
+async function startWith(change) {
+  const { dir, description, files } = await unpackFixture();
+  const d = change(structuredClone(description));
+  return start({ pkg: { description: d, files }, firmwareFactory: await loadFirmwareFile(path.join(dir, description.runtime.module)) });
+}
+
+test('a joint mounted on another one turns with it: its nodes get their own turn, then the parent joint turn', async () => {
+  const { viewer } = await startWith((d) => {
+    d.servos.push({ id: 7, parent: 0, nodes: ['button'], pivot: [0, 8, 16], axis: [1, 0, 0], zeroDeg: 90, direction: 1, scale: 1 });
+    return d;
+  });
+  await until(() => viewer.rotations.has('arm') && viewer.rotations.has('button'));
+  const [own, parent] = viewer.rotations.get('button');
+  assert.deepEqual(own, { pivot: [0, 8, 16], axis: [1, 0, 0], angleDeg: 0 }); // servo 7 has not moved: its rest angle
+  assert.deepEqual(parent, viewer.rotations.get('arm')[0]);
+  viewer.pick('button', 'down');
+  viewer.pick('button', 'up');
+  await until(() => Math.abs(viewer.rotations.get('arm')[0].angleDeg - 60) < 0.5);
+  await until(() => Math.abs(viewer.rotations.get('button')[1].angleDeg - 60) < 0.5); // the child follows its parent
+});
+
+test('the screen face selector reaches the viewer, and hidden nodes are hidden while the device runs', async () => {
+  const { session, viewer } = await startWith((d) => ({ ...d, screen: { ...d.screen, face: { primitive: 0 } }, hide: ['case'] }));
+  await until(() => viewer.images.length > 0);
+  assert.deepEqual(viewer.images.at(-1).face, { primitive: 0 });
+  assert.deepEqual([...viewer.hidden], ['case']);
+  await session.dispose();
+  assert.deepEqual([...viewer.hidden], []);
 });
 
 test('repower starts the firmware again from the beginning', async () => {

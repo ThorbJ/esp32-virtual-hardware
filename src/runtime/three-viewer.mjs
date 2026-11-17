@@ -1,6 +1,7 @@
 // A reference viewer for the web runtime, on three.js (peer dependency): loads a Kit model GLB, orbit / zoom, and implements
-// the runtime's viewer interface (setScreenImage, onPick, setRotation, setOffset). The shop's own viewer implements the same
-// interface; this one is for development pages and for anyone embedding a virtual device without a viewer of their own.
+// the runtime's viewer interface (setScreenImage, onPick, setRotation, setOffset, setHidden). The shop's own viewer implements
+// the same interface; this one is for development pages and for anyone embedding a virtual device without a viewer of their own.
+// The node work (screen face, turns and offsets in the nodes' parent spaces, hidden nodes) is three-nodes.mjs.
 //
 //   const viewer = await createThreeViewer(container, { glbUrl, homeDirection: [0.35, 0.3, 0.88] });
 //   const session = await startVirtualDevice({ pkg, viewer });
@@ -9,6 +10,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+import { createNodeControls } from './three-nodes.mjs';
 
 export async function createThreeViewer(container, { glbUrl, homeDirection = [1, 0.5, 1.5], background = 0xeef0f3 }) {
   const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -26,9 +28,11 @@ export async function createThreeViewer(container, { glbUrl, homeDirection = [1,
 
   const loader = new GLTFLoader();
   loader.setMeshoptDecoder(MeshoptDecoder);
-  const model = (await loader.loadAsync(glbUrl)).scene;
+  const gltf = await loader.loadAsync(glbUrl);
+  const model = gltf.scene;
   scene.add(model); // the model stays in its own coordinates (mm): Kit model coordinates = world coordinates here
   model.updateMatrixWorld(true);
+  const nodes = createNodeControls(THREE, model, gltf.parser);
 
   const box = new THREE.Box3().setFromObject(model);
   const center = box.getCenter(new THREE.Vector3());
@@ -51,41 +55,8 @@ export async function createThreeViewer(container, { glbUrl, homeDirection = [1,
   resize();
   renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
 
-  const node = (name) => {
-    const o = model.getObjectByName(name);
-    if (!o) throw new Error(`the Kit model has no node ${name}`);
-    return o;
-  };
-  const rest = new Map(); // node → { position, quaternion } as loaded
-  const restOf = (o) => {
-    if (!rest.has(o)) rest.set(o, { position: o.position.clone(), quaternion: o.quaternion.clone() });
-    return rest.get(o);
-  };
   const centerOf = (o) => new THREE.Box3().setFromObject(o).getCenter(new THREE.Vector3());
-
-  // ---------- screen ----------
-  const screens = new Map();
-  function setScreenImage(name, materialIndex, image) {
-    let s = screens.get(name);
-    if (!s) {
-      const mesh = node(name);
-      const target = mesh.isMesh ? mesh : mesh.getObjectByProperty('isMesh', true);
-      const texture = new THREE.DataTexture(image.data, image.width, image.height, THREE.RGBAFormat);
-      texture.flipY = false;
-      texture.colorSpace = THREE.SRGBColorSpace;
-      texture.magFilter = THREE.LinearFilter;
-      texture.minFilter = THREE.LinearFilter;
-      const multi = Array.isArray(target.material);
-      const mats = multi ? [...target.material] : [target.material];
-      const i = multi ? (materialIndex ?? 0) : 0;
-      mats[i] = new THREE.MeshBasicMaterial({ map: texture, toneMapped: false });
-      target.material = multi ? mats : mats[0];
-      s = { texture };
-      screens.set(name, s);
-    }
-    if (s.texture.image.data !== image.data) s.texture.image = { data: image.data, width: image.width, height: image.height };
-    s.texture.needsUpdate = true;
-  }
+  const nameOf = (o) => o.userData?.name ?? o.name;
 
   // ---------- picking ----------
   const pickers = [];
@@ -94,10 +65,12 @@ export async function createThreeViewer(container, { glbUrl, homeDirection = [1,
   const hitAt = (ev) => {
     const r = renderer.domElement.getBoundingClientRect();
     ray.setFromCamera(new THREE.Vector2(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1), camera);
+    const shown = (o) => { for (; o; o = o.parent) if (!o.visible) return false; return true; };
     for (const hit of ray.intersectObject(model, true)) {
+      if (!shown(hit.object)) continue; // hidden nodes (description hide) do not catch clicks
       for (let o = hit.object; o; o = o.parent) {
-        const p = pickers.find((k) => k.nodes.includes(o.name));
-        if (p) return { picker: p, node: o.name, hit };
+        const p = pickers.find((k) => k.nodes.includes(nameOf(o)));
+        if (p) return { picker: p, node: nameOf(o), hit };
       }
       return null; // something else is in front
     }
@@ -107,7 +80,7 @@ export async function createThreeViewer(container, { glbUrl, homeDirection = [1,
     node, phase,
     uv: hit?.uv ? [hit.uv.x, hit.uv.y] : undefined,
     point: hit ? hit.point.toArray() : undefined,
-    nodeCenter: centerOf(model.getObjectByName(node)).toArray(),
+    nodeCenter: centerOf(nodes.node(node)).toArray(),
   });
   const el = renderer.domElement;
   el.addEventListener('pointerdown', (ev) => {
@@ -138,25 +111,6 @@ export async function createThreeViewer(container, { glbUrl, homeDirection = [1,
     return () => pickers.splice(pickers.indexOf(p), 1);
   }
 
-  // ---------- servos, press ----------
-  function setRotation(names, { pivot, axis, angleDeg }) {
-    const objs = names.map(node);
-    const pv = Array.isArray(pivot) ? new THREE.Vector3(...pivot) : centerOf(node(pivot.node));
-    const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(...axis).normalize(), THREE.MathUtils.degToRad(angleDeg));
-    for (const o of objs) {
-      const r = restOf(o);
-      // rotate the rest pose about the pivot (nodes are children of the model root here: their parent space = model space)
-      o.position.copy(r.position).sub(pv).applyQuaternion(q).add(pv);
-      o.quaternion.copy(q).multiply(r.quaternion);
-    }
-  }
-  function setOffset(names, offset) {
-    for (const o of names.map(node)) {
-      const r = restOf(o);
-      o.position.copy(r.position);
-      if (offset) o.position.add(new THREE.Vector3(...offset));
-    }
-  }
-
-  return { THREE, renderer, scene, camera, controls, model, setScreenImage, onPick, setRotation, setOffset };
+  const { setScreenImage, setRotation, setOffset, setHidden } = nodes;
+  return { THREE, renderer, scene, camera, controls, model, gltf, setScreenImage, onPick, setRotation, setOffset, setHidden };
 }

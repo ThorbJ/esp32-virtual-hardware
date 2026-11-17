@@ -10,23 +10,36 @@
 //
 // The page must be cross-origin isolated (COOP same-origin + COEP require-corp): the firmware runs on threads.
 //
-// Viewer interface (the page's 3D viewer implements it; every method is optional, a missing one switches that part off):
-//   setScreenImage(node, materialIndex, { width, height, data })
-//       Show data (RGBA bytes, rows from the top) as the texture of that node's material (materialIndex undefined = its only
-//       material), mapped by the mesh's glTF texture coordinates: with three.js a DataTexture with flipY = false, sRGB colour
-//       space. Called again with the same buffer for every new frame: mark the texture as changed.
+// Viewer interface (the page's 3D viewer implements it; every method is optional, a missing one switches that part off).
+// "Kit model coordinates" are those of the GLB scene as loaded (the manifest's units, mm), before the viewer centres or scales
+// it. Nodes are named as in the GLB (a name = the first node of that name in the default scene, depth first). A node may sit
+// under unnamed, rotated or scaled groups: every turn and offset below is in Kit model coordinates and the viewer converts it
+// into the node's own parent space (three.js: new local matrix = parentInModel⁻¹ × motion × restInModel).
+//   setScreenImage({ node, face }, { width, height, data })
+//       Show data (RGBA bytes, rows from the top) on the screen face, mapped by its glTF texture coordinates (with three.js a
+//       DataTexture with flipY = false, sRGB colour space, unlit). The face: start at the node named node, follow face.path
+//       (indexes into glTF `children`, one per level; none = the node itself), take that node's mesh and its primitive
+//       face.primitive (default 0); replace that primitive's material. three.js GLTFLoader: parser.associations maps objects to
+//       glTF node indexes ({ nodes }) and mesh primitives ({ primitives }); a mesh with several primitives is a Group of Meshes.
+//       Called again with the same buffer for every new frame: mark the texture as changed.
 //   onPick(nodes, handler) → unsubscribe
 //       Report pointer presses on these nodes (or anything under them) as handler({ node, phase, uv, point, nodeCenter }):
 //       phase 'down' on press, 'move' while held over the node, 'up' on release (wherever the pointer is then; to the node
 //       that got the 'down'); node = which of the given nodes; uv = [u, v] glTF texture coordinates of the hit (three.js
 //       intersection.uv); point and nodeCenter = the hit and the node's bounding-box centre in Kit model coordinates (mm).
 //       While a pick is held the viewer should not rotate the camera.
-//   setRotation(nodes, { pivot, axis, angleDeg })
-//       Turn these nodes, from their place in the Kit model, by angleDeg about the axis through pivot (right-hand rule).
-//       pivot is [x, y, z] in Kit model coordinates (mm) or { node } = that node's bounding-box centre in the Kit model.
+//   setRotation(nodes, turns)
+//       Move these nodes from their place in the Kit model by a list of turns [{ pivot, axis, angleDeg }, …], applied in order:
+//       each turns the result of the one before by angleDeg about the axis through pivot (right-hand rule). The first is the
+//       servo's own joint, the next the joint it is mounted on, and so on; every pivot and axis is where it is in the Kit model
+//       as loaded (rest pose), so the composition is exact (motion = turns[n-1] ∘ … ∘ turns[0]). pivot is [x, y, z] (mm) or
+//       { node } = that node's bounding-box centre in the Kit model as loaded (not where it has moved to).
 //   setOffset(nodes, offset)
 //       Move these nodes from their place by offset [x, y, z] (mm, Kit model coordinates); null = back in place.
-// "Kit model coordinates" are those of the GLB scene as loaded (the manifest's units, mm), before the viewer centres or scales it.
+//   setHidden(patterns, hidden)
+//       Hide (true) or show again (false) every node whose name matches one of the patterns (`*` = any run of characters;
+//       nodeNameMatches in esp32-virtual-hardware/device-description), with everything under it. Called with true at start and
+//       false at dispose.
 import { DESCRIPTION_FILE, checkPackageFiles, validateDeviceDescription } from '../../device-description/validate.mjs';
 import { readPackage } from '../package/index.mjs';
 import { createVirtualDevice } from '../interface/virtual-device.mjs';
@@ -164,7 +177,8 @@ export async function startVirtualDevice(options) {
   // ---------- screen ----------
   if (d.screen && viewer.setScreenImage) {
     const image = createScreenImage(d.screen);
-    const draw = () => viewer.setScreenImage(d.screen.node, d.screen.materialIndex, image);
+    const target = { node: d.screen.node, face: d.screen.face };
+    const draw = () => viewer.setScreenImage(target, image);
     draw();
     let latest = null;
     let scheduled = false;
@@ -218,11 +232,23 @@ export async function startVirtualDevice(options) {
   // ---------- servos ----------
   if (d.servos?.length && viewer.setRotation) {
     const byId = new Map(d.servos.map((s) => [s.id, s]));
+    const joint = new Map(); // id → joint angle; a servo not heard from yet is at its rest angle (0)
+    const turnOf = (s) => ({ pivot: s.pivot, axis: s.axis, angleDeg: joint.get(s.id) ?? 0 });
+    const turns = (s) => { const out = []; for (let at = s; at; at = byId.get(at.parent)) out.push(turnOf(at)); return out; };
+    const childrenOf = (id) => d.servos.filter((c) => c.parent === id);
+    const pose = (s) => { viewer.setRotation(s.nodes, turns(s)); for (const c of childrenOf(s.id)) pose(c); };
     cleanups.push(dev.on('servo', ({ id, angle, pulseUs }) => {
       const s = byId.get(id);
       if (!s || pulseUs === 0) return; // pulse 0 = released: the servo keeps its angle
-      viewer.setRotation(s.nodes, { pivot: s.pivot, axis: s.axis, angleDeg: servoJointAngle(s, angle) });
+      joint.set(id, servoJointAngle(s, angle));
+      pose(s);
     }));
+  }
+
+  // ---------- nodes hidden while the device runs ----------
+  if (d.hide?.length && viewer.setHidden) {
+    viewer.setHidden(d.hide, true);
+    cleanups.push(() => viewer.setHidden(d.hide, false));
   }
 
   // ---------- sound, camera ----------

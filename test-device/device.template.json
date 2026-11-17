@@ -1,5 +1,5 @@
 {
-  "formatVersion": 1,
+  "formatVersion": 2,
   "device": { "id": "test-device" },
   "appliesTo": { "kit": "test-kit", "options": [] },
   "firmware": {

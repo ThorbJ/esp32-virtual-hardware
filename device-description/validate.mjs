@@ -1,19 +1,20 @@
-// Device description (设备说明) validator, format version 1.
+// Device description (设备说明) validator, format version 2.
 //
 // One file, no dependencies, plain JavaScript: browsers, Node 22+ and Cloudflare Workers can import it as it is, and a project
 // may copy it (keep this header and the version). The written definition is README.md next to this file; schema.json is the
 // same structure as JSON Schema (2020-12). This validator checks the structure and the rules JSON Schema cannot express
-// (files listed, channels and sections agreeing). checkPackageFiles also checks a package's files against the description.
+// (files listed, channels and sections agreeing, servo joints mounted on servo joints without loops). checkPackageFiles also checks
+// a package's files against the description; checkNodesInModel checks the Kit model nodes and the screen face it points at.
 //
-//   import { validateDeviceDescription, checkPackageFiles, checkNodesInModel, glbNodeNames } from 'esp32-virtual-hardware/device-description';
+//   import { validateDeviceDescription, checkPackageFiles, checkNodesInModel } from 'esp32-virtual-hardware/device-description';
 //   const { ok, issues } = validateDeviceDescription(JSON.parse(text));
 //   // issues: [{ path: 'screen.panel.width', rule: 'range', message: '…' }], every problem at once, in document order.
 //
 // Rule codes are stable (a checker may translate them): required, type, unknown_field, enum, format, range, empty, duplicate,
-// unsupported_version, bad_path, not_in_files, channel_not_declared, not_screen_node, zero_vector,
-// file_missing, file_unlisted, size_mismatch, sha256_mismatch, package_too_large, unknown_node.
+// unsupported_version, bad_path, not_in_files, channel_not_declared, not_screen_node, zero_vector, unknown_servo, servo_cycle,
+// file_missing, file_unlisted, size_mismatch, sha256_mismatch, package_too_large, unknown_node, bad_screen_face.
 
-export const FORMAT_VERSION = 1;
+export const FORMAT_VERSION = 2;
 /** The virtual device interface version this format describes (vhw/include/vdev_io.h VDEV_IO_VERSION). */
 export const INTERFACE_VERSION = 3;
 /** Upper limit of one package: all files together, bytes. */
@@ -42,7 +43,7 @@ export function validateDeviceDescription(d) {
   const v = validator(add);
 
   if (!v.object('', d)) return { ok: false, issues };
-  v.fields('', d, ['formatVersion', 'device', 'appliesTo', 'firmware', 'runtime', 'files', 'channels', 'screen', 'inputs', 'servos', 'hostLink', 'mic'],
+  v.fields('', d, ['formatVersion', 'device', 'appliesTo', 'firmware', 'runtime', 'files', 'channels', 'screen', 'inputs', 'servos', 'hostLink', 'mic', 'hide'],
     ['formatVersion', 'device', 'appliesTo', 'firmware', 'runtime', 'files', 'channels']);
 
   if ('formatVersion' in d && d.formatVersion !== FORMAT_VERSION) {
@@ -137,9 +138,15 @@ export function validateDeviceDescription(d) {
 
   if ('screen' in d && v.object('screen', d.screen)) {
     const s = d.screen;
-    v.fields('screen', s, ['node', 'materialIndex', 'panel', 'rotateCW', 'area', 'background'], ['node', 'panel', 'rotateCW', 'area']);
+    v.fields('screen', s, ['node', 'face', 'panel', 'rotateCW', 'flipX', 'flipY', 'area', 'background'], ['node', 'panel', 'rotateCW', 'area']);
     v.string('screen.node', s.node);
-    if ('materialIndex' in s) v.integer('screen.materialIndex', s.materialIndex, 0, 63);
+    if ('face' in s && v.object('screen.face', s.face)) {
+      v.fields('screen.face', s.face, ['path', 'primitive'], []);
+      if ('path' in s.face && v.array('screen.face.path', s.face.path)) s.face.path.forEach((n, i) => v.integer(`screen.face.path[${i}]`, n, 0, 65535));
+      if ('primitive' in s.face) v.integer('screen.face.primitive', s.face.primitive, 0, 255);
+    }
+    if ('flipX' in s) v.boolean('screen.flipX', s.flipX);
+    if ('flipY' in s) v.boolean('screen.flipY', s.flipY);
     if (v.object('screen.panel', s.panel, true)) {
       v.fields('screen.panel', s.panel, ['width', 'height', 'format'], ['width', 'height', 'format']);
       v.integer('screen.panel.width', s.panel.width, 1, 2048);
@@ -191,14 +198,20 @@ export function validateDeviceDescription(d) {
 
   if ('servos' in d && v.array('servos', d.servos)) {
     const ids = [];
+    const turned = new Set();
     d.servos.forEach((s, i) => {
       const p = `servos[${i}]`;
       if (!v.object(p, s)) return;
-      v.fields(p, s, ['id', 'nodes', 'pivot', 'axis', 'zeroDeg', 'direction', 'scale', 'minDeg', 'maxDeg', 'approximate'], ['id', 'nodes', 'pivot', 'axis', 'zeroDeg', 'direction', 'scale']);
+      v.fields(p, s, ['id', 'parent', 'nodes', 'pivot', 'axis', 'zeroDeg', 'direction', 'scale', 'minDeg', 'maxDeg', 'approximate'], ['id', 'nodes', 'pivot', 'axis', 'zeroDeg', 'direction', 'scale']);
       if (v.integer(`${p}.id`, s.id, 0, 31)) ids.push(s.id);
+      if ('parent' in s) v.integer(`${p}.parent`, s.parent, 0, 31);
       if (v.array(`${p}.nodes`, s.nodes, true)) {
         if (s.nodes.length === 0) add(`${p}.nodes`, 'empty', 'a servo turns at least one node');
-        s.nodes.forEach((n, j) => v.string(`${p}.nodes[${j}]`, n));
+        s.nodes.forEach((n, j) => {
+          if (!v.string(`${p}.nodes[${j}]`, n)) return;
+          if (turned.has(n)) add(`${p}.nodes[${j}]`, 'duplicate', `${n} is already turned by another servo (a joint on a parent joint moves with it anyway)`);
+          turned.add(n);
+        });
       }
       if (Array.isArray(s.pivot)) v.vector(`${p}.pivot`, s.pivot);
       else if (v.object(`${p}.pivot`, s.pivot, true)) {
@@ -214,6 +227,22 @@ export function validateDeviceDescription(d) {
       if ('approximate' in s) v.bilingual(`${p}.approximate`, s.approximate);
     });
     v.unique('servos.id', ids);
+    // parent: the id of another servo this joint is mounted on; following parents must never come back.
+    const parentOf = new Map(d.servos.filter((s) => Number.isInteger(s?.id) && Number.isInteger(s?.parent)).map((s) => [s.id, s.parent]));
+    d.servos.forEach((s, i) => {
+      if (!Number.isInteger(s?.parent) || !Number.isInteger(s?.id)) return;
+      if (!ids.includes(s.parent)) { add(`servos[${i}].parent`, 'unknown_servo', `there is no servo ${s.parent} to mount servo ${s.id} on`); return; }
+      const seen = new Set([s.id]);
+      for (let at = s.parent; at !== undefined; at = parentOf.get(at)) {
+        if (seen.has(at)) { add(`servos[${i}].parent`, 'servo_cycle', `servo ${s.id} is mounted on itself through its parents`); return; }
+        seen.add(at);
+      }
+    });
+  }
+
+  if ('hide' in d && v.array('hide', d.hide)) {
+    d.hide.forEach((h, i) => v.string(`hide[${i}]`, h));
+    v.unique('hide', d.hide);
   }
 
   if ('hostLink' in d && v.object('hostLink', d.hostLink)) {
@@ -233,7 +262,7 @@ export function validateDeviceDescription(d) {
   return { ok: issues.length === 0, issues };
 }
 
-/** Every Kit model node the description refers to (screen, inputs, servos and servo pivots), sorted, each once. */
+/** Every Kit model node the description refers to by name (screen, inputs, servos and servo pivots), sorted, each once. hide patterns are not names. */
 export function referencedNodes(d) {
   const out = new Set();
   if (typeof d?.screen?.node === 'string') out.add(d.screen.node);
@@ -245,30 +274,75 @@ export function referencedNodes(d) {
   return [...out].sort();
 }
 
+/** Whether a hide pattern matches a node name: the whole name, `*` = any run of characters (also none); nothing else is special. */
+export function nodeNameMatches(pattern, name) {
+  const re = new RegExp(`^${pattern.split('*').map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`, 's');
+  return re.test(name);
+}
+
 /**
- * Check that every node the description refers to exists in the Kit model. nodeNames: the model's node names (glbNodeNames).
- * Returns issues (rule unknown_node), one per place that names a missing node.
+ * Check the description against the Kit model it is used with: every node it names exists, every hide pattern matches at least
+ * one node, and the screen face (screen.node, then screen.face.path through glTF children, then screen.face.primitive) is a
+ * mesh primitive with texture coordinates. model: the GLB bytes (Uint8Array or ArrayBuffer) or its parsed glTF JSON.
+ * A node name means the first node of that name in the default scene, depth first (what three.js getObjectByName finds).
+ * Returns issues (rules unknown_node, bad_screen_face).
  */
-export function checkNodesInModel(d, nodeNames) {
-  const have = new Set(nodeNames);
+export function checkNodesInModel(d, model) {
+  if (Array.isArray(model)) throw new TypeError('checkNodesInModel needs the Kit model (GLB bytes or glTF JSON), not a list of names: format 2 also checks the screen face');
+  const gltf = model instanceof Uint8Array || model instanceof ArrayBuffer ? glbJson(model instanceof ArrayBuffer ? new Uint8Array(model) : model) : model;
+  const nodes = Array.isArray(gltf?.nodes) ? gltf.nodes : [];
+  const order = sceneNodes(gltf);
+  const byName = new Map();
+  for (const i of order) { const n = nodes[i]?.name; if (typeof n === 'string' && !byName.has(n)) byName.set(n, i); }
   const issues = [];
-  const need = (path, n) => { if (typeof n === 'string' && !have.has(n)) issues.push({ path, rule: 'unknown_node', message: `the Kit model has no node ${n}` }); };
+  const add = (path, rule, message) => issues.push({ path, rule, message });
+  const need = (path, n) => { if (typeof n === 'string' && !byName.has(n)) add(path, 'unknown_node', `the Kit model has no node ${n}`); };
   need('screen.node', d?.screen?.node);
   (Array.isArray(d?.inputs) ? d.inputs : []).forEach((inp, i) => need(`inputs[${i}].node`, inp?.node));
   (Array.isArray(d?.servos) ? d.servos : []).forEach((s, i) => {
     (Array.isArray(s?.nodes) ? s.nodes : []).forEach((n, j) => need(`servos[${i}].nodes[${j}]`, n));
     need(`servos[${i}].pivot.node`, s?.pivot?.node);
   });
+  (Array.isArray(d?.hide) ? d.hide : []).forEach((h, i) => {
+    if (typeof h === 'string' && ![...byName.keys()].some((n) => nodeNameMatches(h, n))) add(`hide[${i}]`, 'unknown_node', `no node of the Kit model matches ${h}`);
+  });
+  if (typeof d?.screen?.node === 'string' && byName.has(d.screen.node)) {
+    const face = d.screen.face ?? {};
+    let at = byName.get(d.screen.node);
+    const path = Array.isArray(face.path) ? face.path : [];
+    for (const step of path) {
+      at = nodes[at]?.children?.[step];
+      if (at === undefined) { add('screen.face.path', 'bad_screen_face', `${d.screen.node} has no child at screen.face.path ${JSON.stringify(path)}`); return issues; }
+    }
+    const where = path.length ? `the node at screen.face.path ${JSON.stringify(path)} under ${d.screen.node}` : d.screen.node;
+    const mesh = gltf.meshes?.[nodes[at]?.mesh];
+    const k = face.primitive ?? 0;
+    if (!mesh) add('screen.face', 'bad_screen_face', `${where} has no mesh`);
+    else if (!mesh.primitives?.[k]) add('screen.face.primitive', 'bad_screen_face', `the mesh of ${where} has no primitive ${k}`);
+    else if (mesh.primitives[k].attributes?.TEXCOORD_0 === undefined) add('screen.face', 'bad_screen_face', `primitive ${k} of ${where} has no texture coordinates (TEXCOORD_0)`);
+  }
   return issues;
+}
+
+/** Node indexes of the default scene, depth first in children order. */
+function sceneNodes(gltf) {
+  const out = [];
+  const visit = (i) => { if (out.length > 1e6) return; out.push(i); for (const c of gltf.nodes?.[i]?.children ?? []) visit(c); };
+  for (const r of gltf?.scenes?.[gltf.scene ?? 0]?.nodes ?? []) visit(r);
+  return out;
+}
+
+/** The JSON chunk of a GLB (glTF 2.0 binary), parsed. Throws when the bytes are not a GLB. */
+export function glbJson(bytes) {
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (bytes.byteLength < 20 || dv.getUint32(0, true) !== 0x46546c67 || dv.getUint32(16, true) !== 0x4e4f534a) throw new Error('not a GLB (glTF 2.0 binary)');
+  const len = dv.getUint32(12, true);
+  return JSON.parse(new TextDecoder().decode(bytes.subarray(20, 20 + len)));
 }
 
 /** Node names of a GLB (glTF 2.0 binary), in node order. Throws when the bytes are not a GLB. */
 export function glbNodeNames(bytes) {
-  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  if (bytes.byteLength < 20 || dv.getUint32(0, true) !== 0x46546c67 || dv.getUint32(16, true) !== 0x4e4f534a) throw new Error('not a GLB (glTF 2.0 binary)');
-  const len = dv.getUint32(12, true);
-  const json = JSON.parse(new TextDecoder().decode(bytes.subarray(20, 20 + len)));
-  return (json.nodes ?? []).map((n) => n.name).filter((n) => typeof n === 'string');
+  return (glbJson(bytes).nodes ?? []).map((n) => n.name).filter((n) => typeof n === 'string');
 }
 
 /**

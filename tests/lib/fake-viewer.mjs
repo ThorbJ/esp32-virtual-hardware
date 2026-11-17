@@ -2,12 +2,14 @@
 export function fakeViewer() {
   const handlers = [];
   const v = {
-    images: [],          // { node, materialIndex, width, height, data (copy) }
+    images: [],          // { node, face, width, height, data (copy) }
     offsets: new Map(),  // node → offset or null
-    rotations: new Map(),// node list joined → { pivot, axis, angleDeg }
-    setScreenImage(node, materialIndex, image) { v.images.push({ node, materialIndex, width: image.width, height: image.height, data: image.data.slice() }); },
+    rotations: new Map(),// node list joined → turns [{ pivot, axis, angleDeg }, …]
+    hidden: new Set(),   // hide patterns in force
+    setScreenImage({ node, face }, image) { v.images.push({ node, face, width: image.width, height: image.height, data: image.data.slice() }); },
     setOffset(nodes, offset) { for (const n of nodes) v.offsets.set(n, offset); },
-    setRotation(nodes, spec) { v.rotations.set(nodes.join(','), spec); },
+    setRotation(nodes, turns) { v.rotations.set(nodes.join(','), turns); },
+    setHidden(patterns, hidden) { for (const p of patterns) { if (hidden) v.hidden.add(p); else v.hidden.delete(p); } },
     onPick(nodes, handler) { const h = { nodes, handler }; handlers.push(h); return () => handlers.splice(handlers.indexOf(h), 1); },
     /** Simulate a click: phase 'down' | 'move' | 'up' on a node, with optional uv / point / nodeCenter. */
     pick(node, phase, extra = {}) {

@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/ThorbJ/esp32-virtual-hardware/blob/main/device-description/schema.json",
-  "title": "Virtual device description, format version 1",
-  "description": "Structure of device.json in a virtual device package. Cross-field rules (files listed, channels agreeing with sections, touch on the screen node, area inside 0..1) are checked by validate.mjs, which is the reference. See README.md in this folder.",
+  "title": "Virtual device description, format version 2",
+  "description": "Structure of device.json in a virtual device package. Cross-field rules (files listed, channels agreeing with sections, touch on the screen node, area inside 0..1, servo parents existing and without loops, a node turned by one servo only) are checked by validate.mjs, which is the reference. See README.md in this folder.",
   "type": "object",
   "properties": {
     "formatVersion": {
-      "const": 1
+      "const": 2
     },
     "device": {
       "type": "object",
@@ -246,10 +246,24 @@
           "type": "string",
           "minLength": 1
         },
-        "materialIndex": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 63
+        "face": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 65535
+              }
+            },
+            "primitive": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            }
+          },
+          "additionalProperties": false
         },
         "panel": {
           "type": "object",
@@ -282,6 +296,12 @@
             180,
             270
           ]
+        },
+        "flipX": {
+          "type": "boolean"
+        },
+        "flipY": {
+          "type": "boolean"
         },
         "area": {
           "type": "object",
@@ -491,6 +511,11 @@
             "minimum": 0,
             "maximum": 31
           },
+          "parent": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 31
+          },
           "nodes": {
             "type": "array",
             "items": {
@@ -644,6 +669,14 @@
         "sampleRate"
       ],
       "additionalProperties": false
+    },
+    "hide": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
     }
   },
   "required": [

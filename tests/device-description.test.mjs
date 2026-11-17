@@ -9,7 +9,7 @@ test('a complete description is accepted', () => {
   const r = validateDeviceDescription(sample());
   assert.deepEqual(r.issues, []);
   assert.equal(r.ok, true);
-  assert.equal(FORMAT_VERSION, 1);
+  assert.equal(FORMAT_VERSION, 2);
 });
 
 test('missing source, license and kit are each reported', () => {
@@ -23,8 +23,61 @@ test('missing source, license and kit are each reported', () => {
   assert.ok(r.includes('appliesTo.kit required'));
 });
 
-test('an unknown format version is rejected', () => {
-  assert.deepEqual(rules({ ...sample(), formatVersion: 2 }), ['formatVersion unsupported_version']);
+test('an unknown format version is rejected, format 1 included', () => {
+  assert.deepEqual(rules({ ...sample(), formatVersion: 3 }), ['formatVersion unsupported_version']);
+  assert.deepEqual(rules({ ...sample(), formatVersion: 1 }), ['formatVersion unsupported_version']);
+});
+
+test('format 1 materialIndex is gone: the face selector replaces it', () => {
+  const d = sample();
+  d.screen.materialIndex = 0;
+  assert.deepEqual(rules(d), ['screen.materialIndex unknown_field']);
+});
+
+test('the screen face: a child index path under the screen node and a primitive, both optional', () => {
+  const d = sample();
+  d.screen.face = { path: [0, 17, 0], primitive: 0 };
+  assert.deepEqual(rules(d), []);
+  d.screen.face = {};
+  assert.deepEqual(rules(d), []);
+  d.screen.face = { path: [0, -1, 1.5], primitive: 'x', name: 'glass' };
+  assert.deepEqual(rules(d), ['screen.face.name unknown_field', 'screen.face.path[1] range', 'screen.face.path[2] type', 'screen.face.primitive type']);
+});
+
+test('the screen picture can be mirrored after it is turned', () => {
+  const d = sample();
+  d.screen.flipX = false;
+  d.screen.flipY = true;
+  assert.deepEqual(rules(d), []);
+  d.screen.flipY = 1;
+  assert.deepEqual(rules(d), ['screen.flipY type']);
+});
+
+test('a servo joint can ride on another servo joint (parent), never on itself or in a loop', () => {
+  const d = sample();
+  d.servos.push({ id: 1, parent: 0, nodes: ['head'], pivot: [0, 87, -2], axis: [1, 0, 0], zeroDeg: 90, direction: 1, scale: 1 });
+  assert.deepEqual(rules(d), []);
+  d.servos[1].parent = 5;
+  assert.deepEqual(rules(d), ['servos[1].parent unknown_servo']);
+  d.servos[1].parent = 1;
+  assert.deepEqual(rules(d), ['servos[1].parent servo_cycle']);
+  d.servos[1].parent = 0;
+  d.servos[0].parent = 1;
+  assert.deepEqual(rules(d), ['servos[0].parent servo_cycle', 'servos[1].parent servo_cycle']);
+});
+
+test('a node is turned by one servo only (a child joint already carries its nodes along with its parent)', () => {
+  const d = sample();
+  d.servos.push({ id: 1, parent: 0, nodes: ['head', 'arm'], pivot: [0, 87, -2], axis: [1, 0, 0], zeroDeg: 90, direction: 1, scale: 1 });
+  assert.deepEqual(rules(d), ['servos[1].nodes[1] duplicate']);
+});
+
+test('nodes to hide while the device runs: name patterns with * wildcards, each once', () => {
+  const d = sample();
+  d.hide = ['official-screen-frame-*', 'sticker'];
+  assert.deepEqual(rules(d), []);
+  d.hide = ['', 'a', 'a', 3];
+  assert.deepEqual(rules(d), ['hide[0] empty', 'hide[3] type', 'hide duplicate']);
 });
 
 test('unknown fields are rejected (typos do not pass silently)', () => {
@@ -92,5 +145,6 @@ test('not an object at all', () => {
 test('referencedNodes lists every model node the description points at, once', () => {
   const d = sample();
   d.inputs.push({ kind: 'touch', node: 'screen' });
+  d.hide = ['frame-*'];
   assert.deepEqual(referencedNodes(d), ['arm', 'button', 'screen', 'servo']);
 });

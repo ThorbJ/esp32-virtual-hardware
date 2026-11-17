@@ -11,8 +11,15 @@ function viewSize(panel, q) {
   return q % 2 ? { w: panel.height, h: panel.width } : { w: panel.width, h: panel.height };
 }
 
-/** View pixel (x, y) → native panel pixel { col, row }. */
-function viewToPanel(panel, q, x, y) {
+/**
+ * Texture-side picture pixel (x, y) → native panel pixel { col, row }: undo the mirror (flipX / flipY, applied after the turn),
+ * then the clockwise turn.
+ */
+function viewToPanel(screen, q, x, y) {
+  const { panel } = screen;
+  const view = viewSize(panel, q);
+  if (screen.flipX) x = view.w - 1 - x;
+  if (screen.flipY) y = view.h - 1 - y;
   switch (q) {
     case 1: return { col: y, row: panel.height - 1 - x };
     case 2: return { col: panel.width - 1 - x, row: panel.height - 1 - y };
@@ -28,7 +35,8 @@ function parseColor(hex = '#000000') {
 
 /**
  * The screen texture of a device description's `screen`: an RGBA image in glTF texture space (origin top-left, rows going
- * down) for the whole material of the screen node. The panel's picture fills screen.area; the rest is screen.background.
+ * down) for the whole screen face. The panel's picture, turned by rotateCW and then mirrored by flipX / flipY, fills
+ * screen.area; the rest is screen.background.
  * update(frame) redraws it from an interface screen frame (RGB565, native panel direction). Returns
  * { width, height, data: Uint8ClampedArray, update(frame) }; data is the same buffer every time.
  */
@@ -56,7 +64,7 @@ export function createScreenImage(screen) {
     for (let x = 0; x < aw; x++) {
       const vx = Math.min(view.w - 1, Math.floor((x / aw) * view.w));
       const vy = Math.min(view.h - 1, Math.floor((y / ah) * view.h));
-      const { col, row } = viewToPanel(panel, q, vx, vy);
+      const { col, row } = viewToPanel(screen, q, vx, vy);
       target[y * aw + x] = row * panel.width + col;
       offset[y * aw + x] = ((ay + y) * width + ax + x) * 4;
     }
@@ -77,7 +85,7 @@ export function createScreenImage(screen) {
 }
 
 /**
- * A point on the screen node's material in glTF texture coordinates [u, v] (0..1, origin top-left: what three.js reports for
+ * A point on the screen face in glTF texture coordinates [u, v] (0..1, origin top-left: what three.js reports for
  * glTF meshes) → native panel pixel { x, y } for the interface's touch(), or null outside screen.area.
  */
 export function uvToPanel(screen, [u, v]) {
@@ -87,7 +95,7 @@ export function uvToPanel(screen, [u, v]) {
   const vx = Math.floor(((u - area.x) / area.width) * view.w);
   const vy = Math.floor(((v - area.y) / area.height) * view.h);
   if (!(vx >= 0 && vy >= 0 && vx < view.w && vy < view.h)) return null;
-  const { col, row } = viewToPanel(panel, q, vx, vy);
+  const { col, row } = viewToPanel(screen, q, vx, vy);
   return { x: col, y: row };
 }
 

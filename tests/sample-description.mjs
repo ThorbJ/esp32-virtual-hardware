@@ -1,6 +1,6 @@
 // A complete, valid device description used by several tests (each test changes one thing in a copy).
 export const sample = () => ({
-  formatVersion: 1,
+  formatVersion: 2,
   device: { id: 'test-device' },
   appliesTo: { kit: 'test-kit', options: [] },
   firmware: {
