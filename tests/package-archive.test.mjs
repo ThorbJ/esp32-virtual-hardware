@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { buildPackage, readPackage } from '../src/package/index.mjs';
+import { readTar } from '../src/package/tar.mjs';
 import { checkPackageFiles, validateDeviceDescription } from '../device-description/validate.mjs';
 import { sample } from './sample-description.mjs';
 
@@ -49,4 +50,34 @@ test('tampered, missing and extra files are reported', async () => {
 
 test('an archive without device.json, or not an archive, is refused with a reason', async () => {
   await assert.rejects(readPackage(enc('hello')), /not a package archive/);
+});
+
+// A tar header with a valid checksum but a size field the parser must not trust.
+function rawTarWithSize(sizeField) {
+  const h = new Uint8Array(512);
+  h.set(enc('device.json'), 0);
+  h.set(enc('0000644\0'), 100);
+  h.set(enc(sizeField.padEnd(12, '\0').slice(0, 12)), 124);
+  h.fill(0x20, 148, 156);
+  h[156] = 0x30;
+  h.set(enc('ustar\0'), 257);
+  h.set(enc('00'), 263);
+  let sum = 0;
+  for (const b of h) sum += b;
+  h.set(enc(`${sum.toString(8).padStart(6, '0')}\0 `), 148);
+  const out = new Uint8Array(512 * 4);
+  out.set(h, 0);
+  return out;
+}
+
+// '-1000' is -512: before v0.2.1 the reader stepped back onto the same header for ever.
+for (const size of ['-1000', '-1', '1e3', '0x10', '12 34', '9', '+10', '']) {
+  test(`a header whose size field is ${JSON.stringify(size)} is refused, not looped on`, async () => {
+    assert.throws(() => readTar(rawTarWithSize(size)), /tar header size/);
+    await assert.rejects(readPackage(rawTarWithSize(size)), /not a package archive/);
+  });
+}
+
+test('a size past the end of the archive is refused as truncated', () => {
+  assert.throws(() => readTar(rawTarWithSize('77777777777')), /truncated/);
 });

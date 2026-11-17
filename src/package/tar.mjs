@@ -51,25 +51,40 @@ export function writeTar(entries) {
   return out;
 }
 
-/** Map<path, Uint8Array> of the regular files. Throws on a malformed archive. */
+/**
+ * A numeric header field: octal digits only (leading spaces allowed, ended by NUL or space), at most `width - 1` digits, so always a
+ * non-negative safe integer. Anything else (sign, exponent, hex, base-256, empty) is null.
+ */
+function octalField(h, off, width) {
+  let s = '';
+  for (const b of h.subarray(off, off + width)) { if (b === 0) break; s += String.fromCharCode(b); }
+  const m = /^ *([0-7]+) *$/.exec(s);
+  return m && m[1].length < width ? parseInt(m[1], 8) : null;
+}
+
+/** Map<path, Uint8Array> of the regular files. Throws on a malformed archive (bad checksum or size field, truncated entry). */
 export function readTar(bytes) {
   const files = new Map();
   let off = 0;
-  while (off + BLOCK <= bytes.byteLength) {
+  // Every entry moves at least one block forward, so there are never more entries than blocks.
+  for (let n = 0, max = Math.floor(bytes.byteLength / BLOCK); n <= max && off + BLOCK <= bytes.byteLength; n++) {
     const h = bytes.subarray(off, off + BLOCK);
     if (h.every((b) => b === 0)) break;
     const str = (o, l) => { const s = h.subarray(o, o + l); const z = s.indexOf(0); return dec.decode(z < 0 ? s : s.subarray(0, z)); };
     let sum = 0;
     for (let i = 0; i < BLOCK; i++) sum += i >= 148 && i < 156 ? 0x20 : h[i];
-    if (parseInt(str(148, 8).trim(), 8) !== sum) throw new Error('bad tar header checksum');
-    const size = parseInt(str(124, 12).trim() || '0', 8);
+    if (octalField(h, 148, 8) !== sum) throw new Error('bad tar header checksum');
+    const size = octalField(h, 124, 12);
+    if (size === null) throw new Error('bad tar header size');
     const type = String.fromCharCode(h[156] || 0x30);
     const prefix = str(257, 6).startsWith('ustar') ? str(345, 155) : '';
     const path = prefix ? `${prefix}/${str(0, 100)}` : str(0, 100);
-    off += BLOCK;
-    if (off + size > bytes.byteLength) throw new Error('truncated tar entry');
-    if (type === '0' || type === '\0') files.set(path, bytes.slice(off, off + size));
-    off += Math.ceil(size / BLOCK) * BLOCK;
+    const start = off + BLOCK;
+    if (start + size > bytes.byteLength) throw new Error('truncated tar entry');
+    if (type === '0' || type === '\0') files.set(path, bytes.slice(start, start + size));
+    const next = start + Math.ceil(size / BLOCK) * BLOCK;
+    if (next <= off) throw new Error('tar entry does not move forward');
+    off = next;
   }
   return files;
 }

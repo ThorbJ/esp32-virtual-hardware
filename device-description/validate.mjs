@@ -34,6 +34,15 @@ const COLOR = /^#[0-9a-fA-F]{6}$/;
 const FILE_PATH = /^(firmware|licenses)\/[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/;
 
 /**
+ * The one rule for a file path in a package (files[].path), for every program that checks, stores or serves package files: under
+ * firmware/ or licenses/, parts of letters, digits, `.`, `_` and `-` joined by single `/` (so no empty part, leading `/`, backslash,
+ * space or control character), no part that is `.`, and no `..` anywhere (not even inside a name: web servers refuse such paths).
+ */
+export function isPackageFilePath(path) {
+  return typeof path === 'string' && FILE_PATH.test(path) && !path.includes('..') && !path.split('/').includes('.');
+}
+
+/**
  * Validate a parsed device description. Returns { ok, issues }.
  * Paths use dots and [index]; '' is the whole document.
  */
@@ -102,7 +111,7 @@ export function validateDeviceDescription(d) {
       if (!v.object(p, f)) return;
       v.fields(p, f, ['path', 'size', 'sha256'], ['path', 'size', 'sha256']);
       if (v.string(`${p}.path`, f.path)) {
-        if (!FILE_PATH.test(f.path) || f.path.split('/').some((s) => s === '.' || s === '..')) add(`${p}.path`, 'bad_path', 'a file path must be under firmware/ or licenses/, without . or .. parts');
+        if (!isPackageFilePath(f.path)) add(`${p}.path`, 'bad_path', 'a file path must be under firmware/ or licenses/, without . parts or .. anywhere');
         else if (listed.has(f.path)) add(`${p}.path`, 'duplicate', `${f.path} is listed twice`);
         listed.add(f.path);
       }

@@ -13,7 +13,8 @@ export function hostLinkUrl(hostLink) {
 }
 
 /**
- * onState(state, { url, attempts, code }): on every change.
+ * onState(state, { url, attempts, code }): on every change, and again ('waiting' with the new count) after every failed attempt, whether the
+ * socket closed (code: its close code) or the browser refused to create it at all (no code; e.g. local network access blocked).
  * onTraffic(direction, bytes): 'rx' = computer → device, 'tx' = device → computer.
  * retryMs: wait between attempts while the program is not there.
  */
@@ -44,6 +45,8 @@ export function connectHostLink(dev, { url, onState = () => {}, onTraffic = () =
     try {
       sock = new WebSocketImpl(url);
     } catch {
+      state = null; // report the failed attempt, so a page counting attempts sees this case too
+      setState('waiting');
       retryTimer = setTimeout(open, retryMs);
       return;
     }

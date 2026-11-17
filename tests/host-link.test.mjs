@@ -64,3 +64,16 @@ test('when the program goes away the device is unplugged and the link waits agai
   assert.equal(dev.hostPresent, false);
   await program.waitForClient(3000); // comes back by itself
 });
+
+test('when the browser refuses to even create the socket, every retry is reported with its attempt count', async () => {
+  const dev = { on: () => () => {}, setHostPresent: () => {}, hostWrite: () => {} };
+  class Blocked { constructor() { throw new DOMException('blocked by the browser', 'SecurityError'); } }
+  const reports = [];
+  const link = connectHostLink(dev, { url: 'ws://127.0.0.1:47615/', retryMs: 5, WebSocketImpl: Blocked, onState: (s, info) => reports.push([s, info.attempts]) });
+  cleanup.push(() => link.close());
+  while (link.attempts < 5) await sleep(5);
+  link.close();
+  const waiting = reports.filter(([s]) => s === 'waiting').map(([, n]) => n);
+  for (const n of [1, 2, 3, 4]) assert.ok(waiting.includes(n), `attempt ${n} reported: ${JSON.stringify(reports)}`);
+  assert.equal(link.state, 'closed');
+});

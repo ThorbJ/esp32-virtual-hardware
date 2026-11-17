@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { validateDeviceDescription, referencedNodes, FORMAT_VERSION } from '../device-description/validate.mjs';
+import { validateDeviceDescription, referencedNodes, isPackageFilePath, FORMAT_VERSION } from '../device-description/validate.mjs';
 import { sample } from './sample-description.mjs';
 
 const rules = (d) => validateDeviceDescription(d).issues.map((i) => `${i.path} ${i.rule}`);
@@ -109,6 +109,20 @@ test('file paths stay inside the package folders', () => {
   const r = rules(d);
   assert.ok(r.includes('files[3].path bad_path'), r.join('\n'));
   assert.ok(r.includes('files[4].path bad_path'));
+});
+
+test('a file name with ".." anywhere in it is refused (a shop serving the files refuses such paths)', () => {
+  const d = sample();
+  d.files.push({ path: 'firmware/device..mjs', size: 1, sha256: 'd'.repeat(64) });
+  assert.ok(rules(d).includes('files[3].path bad_path'), rules(d).join('\n'));
+});
+
+test('isPackageFilePath: the one rule for a file path in a package', () => {
+  for (const ok of ['firmware/a.mjs', 'firmware/sub/a.b.wasm', 'licenses/LICENSE', 'licenses/.hidden', 'firmware/a-b_c.data']) assert.equal(isPackageFilePath(ok), true, ok);
+  for (const bad of ['device.json', 'firmware', 'firmware/', '/firmware/a.mjs', 'firmware//a.mjs', 'firmware/./a.mjs', 'firmware/../a.mjs', 'firmware/.',
+    'firmware/a..mjs', 'firmware/..a', 'firmware\\a.mjs', 'firmware/a\u0000.mjs', 'firmware/a b.mjs', 'other/a.mjs', 'firmware/é.mjs', '', 42, null]) {
+    assert.equal(isPackageFilePath(bad), false, JSON.stringify(bad));
+  }
 });
 
 test('sections and channels must agree', () => {
