@@ -88,3 +88,50 @@ test('switching it on again after off asks for a new stream and captures that on
   audio.dispose();
   assert.equal(streams[1].getTracks()[0].readyState, 'ended');
 });
+
+// Permission prompts answered later: each getUserMedia call waits until the test answers it, in any order.
+function holdPermissionRequests() {
+  const pending = [];
+  navigator.mediaDevices.getUserMedia = () => new Promise((resolve) => {
+    const s = new FakeStream();
+    streams.push(s);
+    pending.push(() => resolve(s));
+  });
+  return pending;
+}
+const settle = () => new Promise((r) => setTimeout(r, 0));
+
+for (const order of [[0, 1], [1, 0]]) {
+  test(`on, off, on while both requests are pending (answered ${order.join(' then ')}): only the last stream stays, live and captured`, async () => {
+    const dev = fakeDevice();
+    const states = [];
+    const audio = createAudioIo(dev, { onState: (ch, s) => { if (ch === 'mic') states.push(s); } });
+    const answer = holdPermissionRequests();
+    const first = audio.micOn();
+    audio.micOff();
+    const second = audio.micOn();
+    for (const i of order) { answer[i](); await settle(); }
+    await Promise.all([first, second]);
+    assert.equal(audio.micState, 'on', states.join(' '));
+    assert.equal(streams[0].getTracks()[0].readyState, 'ended', 'the stale stream is released');
+    assert.equal(streams[1].getTracks()[0].readyState, 'live');
+    assert.deepEqual(sources, [streams[1]]);
+    assert.equal(dev.live.at(-1), true);
+    audio.micOff();
+    assert.equal(streams[1].getTracks()[0].readyState, 'ended', 'switching off reaches the current stream');
+    audio.dispose();
+  });
+}
+
+test('dispose while the permission request is pending: the late stream is released and the mic never goes live', async () => {
+  const dev = fakeDevice();
+  const audio = createAudioIo(dev);
+  const answer = holdPermissionRequests();
+  const pending = audio.micOn();
+  audio.dispose();
+  answer[0]();
+  await pending;
+  assert.equal(streams[0].getTracks()[0].readyState, 'ended');
+  assert.equal(sources.length, 0);
+  assert.ok(!dev.live.includes(true));
+});

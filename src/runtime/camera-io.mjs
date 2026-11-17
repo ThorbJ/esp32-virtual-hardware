@@ -21,6 +21,9 @@ export function createCameraIo(dev, { onState = () => {} } = {}) {
   let frames = 0;
   let lastRequest = null;
   let lastJpeg = null;
+  // Every switch (on, off, feed, dispose) starts a new generation. A start begun under an older one (a permission prompt
+  // answered late, a video still starting) is stale: it stops its own stream and never touches the current one.
+  let generation = 0;
   const setState = (s, detail) => { state = s; onState('camera', s, detail); };
 
   dev.setCameraSource(async (req) => {
@@ -34,14 +37,20 @@ export function createCameraIo(dev, { onState = () => {} } = {}) {
     return bytes;
   });
 
+  const release = (s, v) => {
+    s.getTracks().forEach((t) => t.stop());
+    if (v) v.srcObject = null;
+  };
+
   function stopStream() {
-    stream?.getTracks().forEach((t) => t.stop());
+    if (stream) release(stream, video);
     stream = null;
-    if (video) { video.srcObject = null; video = null; }
+    video = null;
   }
 
   async function cameraOn() {
     if (state === 'on' || state === 'starting') return state;
+    const gen = ++generation;
     image = null;
     setState('starting');
     if (!navigator.mediaDevices?.getUserMedia) { setState('error', 'unsupported'); return state; }
@@ -49,36 +58,47 @@ export function createCameraIo(dev, { onState = () => {} } = {}) {
     try {
       s = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
     } catch (err) {
-      if (state !== 'starting') return state;
+      if (gen !== generation) return state;
       const denied = err?.name === 'NotAllowedError' || err?.name === 'SecurityError';
       setState(denied ? 'denied' : 'error', err?.name ?? String(err));
       return state;
     }
-    if (state !== 'starting') { s.getTracks().forEach((t) => t.stop()); return state; }
+    if (gen !== generation) { release(s); return state; } // switched off (or on again) meanwhile
+    const v = document.createElement('video');
+    v.muted = true;
+    v.playsInline = true;
+    v.srcObject = s;
     stream = s;
-    stream.getVideoTracks()[0]?.addEventListener('ended', () => { stopStream(); setState('denied', 'ended'); });
-    video = document.createElement('video');
-    video.muted = true;
-    video.playsInline = true;
-    video.srcObject = stream;
+    video = v;
+    s.getVideoTracks()[0]?.addEventListener('ended', () => {
+      if (stream !== s) return;
+      generation++;
+      stopStream();
+      setState('denied', 'ended');
+    });
     try {
-      await video.play();
+      await v.play();
     } catch (err) {
+      if (gen !== generation) { release(s, v); return state; }
       stopStream();
       setState('error', err?.message ?? String(err));
       return state;
     }
+    if (gen !== generation) { release(s, v); return state; }
     setState('on');
     return state;
   }
 
-  function cameraOff() { stopStream(); image = null; setState('off'); }
+  function cameraOff() { generation++; stopStream(); image = null; setState('off'); }
 
   async function feedUrl(url) {
     if (!url) { cameraOff(); return; }
+    const gen = ++generation;
     stopStream();
     const blob = await fetch(url).then((r) => { if (!r.ok) throw new Error(`${url} ${r.status}`); return r.blob(); });
-    image = await createImageBitmap(blob);
+    const bitmap = await createImageBitmap(blob);
+    if (gen !== generation) return;
+    image = bitmap;
     setState('feeding');
   }
 
@@ -87,7 +107,7 @@ export function createCameraIo(dev, { onState = () => {} } = {}) {
     get state() { return state; },
     lastJpeg: () => lastJpeg,
     stats: () => ({ state, requests, frames, lastRequest, lastJpegBytes: lastJpeg?.length ?? 0 }),
-    dispose() { stopStream(); dev.setCameraSource(null); },
+    dispose() { generation++; stopStream(); dev.setCameraSource(null); },
   };
 }
 
